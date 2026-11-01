@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Klip Onayı</title>
+<style>
+  :root { --bg:#f5f5f4; --card:#fff; --fg:#1c1917; --mut:#78716c; --line:#e7e5e4; --acc:#ca8a04; --bad:#dc2626; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1c1917; --card:#292524; --fg:#f5f5f4; --mut:#a8a29e; --line:#44403c; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.45 system-ui, sans-serif; }
+  header { position:sticky; top:0; background:var(--bg); border-bottom:1px solid var(--line); padding:12px 16px; display:flex; gap:12px; align-items:center; z-index:1; }
+  header h1 { font-size:18px; margin:0; flex:1; }
+  main { max-width:900px; margin:0 auto; padding:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+  .card.off { opacity:.5; }
+  .top { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  .score { font-weight:700; color:var(--acc); }
+  .mut { color:var(--mut); font-size:13px; }
+  input.hook { width:100%; font:600 17px system-ui; padding:6px 8px; margin:8px 0; box-sizing:border-box; border:1px solid var(--line); border-radius:6px; background:transparent; color:inherit; }
+  .grp { display:grid; grid-template-columns: 90px 1fr; gap:8px; padding:6px 0; border-top:1px dashed var(--line); }
+  .grp textarea { width:100%; font:15px/1.3 ui-monospace, monospace; resize:vertical; box-sizing:border-box; padding:4px 6px; border:1px solid var(--line); border-radius:6px; background:transparent; color:inherit; }
+  .grp textarea.bad { border-color:var(--bad); }
+  .en { font-size:12px; color:var(--mut); grid-column:2; }
+  button { font:600 15px system-ui; padding:8px 16px; border:0; border-radius:8px; background:var(--acc); color:#fff; cursor:pointer; }
+  #msg { font-size:14px; }
+  label { cursor:pointer; }
+  @media (max-width:560px) { .grp { grid-template-columns:1fr; } .en { grid-column:1; } }
+</style>
+</head>
+<body>
+<header><h1>Klip Onayı</h1><span id="msg"></span><button id="save">Kaydet</button></header>
+<main id="list"></main>
+<script>
+let data;
+const $ = (t, a = {}, ...kids) => { const e = document.createElement(t); Object.assign(e, a); e.append(...kids); return e; };
+const fmt = s => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`;
+
+function check(ta) {
+  const bad = ta.value.split("\n").some(l => l.length > data.max_chars) || ta.value.split("\n").filter(l => l.trim()).length > 2;
+  ta.classList.toggle("bad", bad);
+  ta.title = bad ? `En fazla 2 satır, satır başına ${data.max_chars} karakter` : "";
+}
+
+async function init() {
+  data = await (await fetch("/data")).json();
+  const list = document.getElementById("list");
+  for (const b of data.bits) {
+    const tr = data.translations[b.n] || { groups: [], replacements: [] };
+    const cb = $("input", { type: "checkbox", checked: data.approved.includes(b.n), className: "ok" });
+    const card = $("section", { className: "card" });
+    card.dataset.n = b.n;
+    const sync = () => card.classList.toggle("off", !cb.checked);
+    cb.onchange = sync;
+    card.append(
+      $("div", { className: "top" },
+        $("label", {}, cb, ` Render et #${b.n}`),
+        $("span", { className: "score", textContent: `${b.score}/10` }),
+        $("span", { className: "mut", textContent: `${fmt(b.start)} – ${fmt(b.end)} (${(b.end - b.start).toFixed(1)} sn)` })),
+      $("input", { className: "hook", value: b.hook_tr, ariaLabel: "Hook başlığı" }),
+      $("div", { className: "mut", textContent: b.reason }));
+    if (tr.replacements.length)
+      card.append($("div", { className: "mut", textContent: "Uyarlamalar: " + tr.replacements.map(r => `${r.orig} → ${r.tr}`).join(", ") }));
+    for (const nt of tr.notes || [])
+      card.append($("div", { className: "mut", textContent: `Not @${fmt(nt.start)}: ${nt.text}` }));
+    if ((tr.changes || []).length)
+      card.append($("details", {}, $("summary", { className: "mut", textContent: `Çeviri kontrolü: ${tr.changes.length} değişiklik` }),
+        ...tr.changes.map(c => $("div", { className: "mut", textContent: `[${c.type}] ${c.before} → ${c.after}${c.reason ? " (" + c.reason + ")" : ""}` }))));
+    for (const g of tr.groups) {
+      const ta = $("textarea", { rows: 2, value: g.lines.join("\n"), className: "line" });
+      ta.oninput = () => check(ta); check(ta);
+      card.append($("div", { className: "grp" }, $("span", { className: "mut", textContent: fmt(g.start) }), ta, $("div", { className: "en", textContent: g.en })));
+    }
+    sync();
+    list.append(card);
+  }
+}
+
+document.getElementById("save").onclick = async () => {
+  const body = { approved: [], hooks: {}, lines: {} };
+  for (const card of document.querySelectorAll(".card")) {
+    const n = card.dataset.n;
+    if (card.querySelector(".ok").checked) body.approved.push(+n);
+    body.hooks[n] = card.querySelector(".hook").value;
+    body.lines[n] = [...card.querySelectorAll("textarea.line")].map(t => t.value.split("\n"));
+  }
+  const r = await fetch("/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json();
+  const msg = document.getElementById("msg");
+  msg.textContent = j.ok ? `Kaydedildi (${body.approved.length} klip). Terminalde Ctrl+C → python main.py render` : "Hata: " + j.error;
+  msg.style.color = j.ok ? "" : "var(--bad)";
+};
+init();
+</script>
+</body>
+</html>

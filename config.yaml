@@ -1,0 +1,78 @@
+# standup-clipper ayarları. Tüm eşikler, modeller ve görünüm burada.
+
+whisper:
+  model: large-v3          # RTX 4060 (8 GB) için GPU'da large-v3
+  device: cuda
+  compute_type: float16
+  fallback_model: medium   # GPU yüklenemezse CPU + int8 + medium
+  fallback_compute_type: int8
+  language: en
+  # Noktalamalı örnek metin: Whisper'ın noktalama üretmesini ve kısa segmentler vermesini sağlar
+  initial_prompt: "Hello, everyone. Thank you! So, I moved to America. It's great, right?"
+
+laughter:
+  backend: auto            # auto | jrgillick | yamnet  (auto: önce jrgillick, hata olursa yamnet)
+  threshold: 0.4           # olasılık eşiği
+  min_dur: 0.4             # bu süreden kısa kahkahalar atılır (sn)
+  merge_gap: 0.6           # aradaki boşluk bundan kısaysa iki kahkaha birleşir (sn)
+  stride: 1                # jrgillick: her N pencerede bir tahmin. GPU'da 1 (5 dk ses ~15 sn); CPU'da 4 önerilir
+
+candidates:
+  min_len: 20
+  max_len: 90
+  tail: 0.5                # kahkaha bitişinden sonra eklenecek süre
+  top_n: 40
+  consecutive_bonus: 1.0   # klip içindeki her ek kahkaha için bonus puan
+  pause: 0.6               # kelimeler arası bundan uzun duraklama da cümle sınırı sayılır (sn)
+
+select:
+  per_minutes: 5           # her 5 dakikalık gösteriye en fazla 1 bit
+  max_bits: 12             # üst sınır
+  min_score: 6             # bu puanın altındaki bitler seçilmez
+  context_before: 60       # Claude'a aday başlangıcından önce verilecek bağlam (sn)
+
+subs:
+  font: Montserrat ExtraBold      # fonts/ klasöründen yüklenir
+  fallback_font: Arial Black
+  size: 64                  # 38 karakterlik satır ~860 px, 1080 genişliğe sığar
+  outline: 4
+  margin_v: 420             # ana altyazının alttan uzaklığı (px)
+  primary: "&H00FFFFFF"     # beyaz (ASS: &HAABBGGRR)
+  highlight: "&H0000FFFF"   # sarı karaoke vurgusu
+  outline_color: "&H00000000"
+  hook_size: 78
+  hook_margin_v: 260
+  hook_secs: 3
+  credit_size: 36
+  credit_margin_v: 90
+  max_chars: 38
+  max_lines: 2
+  note_size: 46             # açıklama notu (ör. "CPR = kalp masajı"), üstte, hook'un altında
+  note_margin_v: 400
+  note_secs: 2.5
+  note_max_chars: 40
+
+reframe:
+  every_n: 5                # her 5 karede bir yüz tespiti
+  smooth_window: 15         # hareketli ortalama penceresi (örnek sayısı)
+  min_confidence: 0.5
+  models: [blaze_face_short_range, blaze_face_full_range]   # sırayla denenir (full range: uzak/geniş çekim)
+  max_face_y: 0.6           # yüz merkezi karenin bu oranından aşağıdaysa seyirci sayılır
+
+render:
+  encoder: h264_nvenc       # yoksa otomatik libx264
+  cq: 21
+  audio_filter: loudnorm=I=-14:TP=-1.5:LRA=11
+
+review:
+  port: 8765
+
+claude:
+  mode: cli                 # cli (abonelik, `claude -p`) | api (ANTHROPIC_API_KEY)
+  model: claude-opus-5-5
+  effort: high              # yalnız api modu
+  max_retries: 2
+  timeout: 600
+  parallel: 4               # çeviri çağrıları aynı anda kaç tane
+  price_in: 4.0             # $ / 1M girdi token (api modu maliyet logu)
+  price_out: 20.0           # $ / 1M çıktı token

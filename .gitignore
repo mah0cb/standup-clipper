@@ -1,0 +1,9 @@
+samples/
+work/
+out/
+models/
+.venv/
+.env
+__pycache__/
+.pytest_cache/
+clipper.log
