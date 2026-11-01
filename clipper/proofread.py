@@ -71,7 +71,7 @@ def proofread_bit(bit, tr, cfg):
     d = ask_json(prompt, schema(cfg), cfg, check, label=f"kontrol #{bit['n']}", system=SYSTEM)
     return {"groups": [{**g, "lines": lines} for g, lines in zip(groups, d["groups"])],
             "notes": [{**notes[nt["i"]], "text": nt["text"]} for nt in d["notes"]],
-            "replacements": tr["replacements"], "changes": d["changes"]}
+            "replacements": tr["replacements"], "uncovered": tr.get("uncovered", []), "changes": d["changes"]}
 
 
 def run(video, cfg, force=False):

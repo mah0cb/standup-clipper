@@ -13,6 +13,8 @@
   main { max-width:900px; margin:0 auto; padding:16px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
   .card.off { opacity:.5; }
+  .card.warn { border-color:var(--bad); }
+  .miss { color:var(--bad); font-weight:600; font-size:14px; margin:6px 0; }
   .top { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
   .score { font-weight:700; color:var(--acc); }
   .mut { color:var(--mut); font-size:13px; }
@@ -60,6 +62,10 @@ async function init() {
       $("div", { className: "mut", textContent: b.reason }));
     if (tr.replacements.length)
       card.append($("div", { className: "mut", textContent: "Uyarlamalar: " + tr.replacements.map(r => `${r.orig} → ${r.tr}`).join(", ") }));
+    if ((tr.uncovered || []).length) {
+      card.classList.add("warn");
+      card.append($("div", { className: "miss", textContent: "⚠ Altyazısız kalan kelimeler: " + tr.uncovered.map(w => `${w.word} @${fmt(w.start)}`).join(", ") }));
+    }
     for (const nt of tr.notes || [])
       card.append($("div", { className: "mut", textContent: `Not @${fmt(nt.start)}: ${nt.text}` }));
     if ((tr.changes || []).length)

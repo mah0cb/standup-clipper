@@ -65,14 +65,15 @@ def _call_api(prompt, c, system=None):
     return text, f"{u.input_tokens} in / {u.output_tokens} out token, ~${cost:.4f}"
 
 
-def ask_json(prompt, schema, cfg, check=None, label="claude", system=None):
+def ask_json(prompt, schema, cfg, check=None, label="claude", system=None, allow_invalid=False):
     """Claude'dan şemaya uyan JSON alır. Geçersizse hatayı ekleyip max_retries kez yeniden dener.
-    check(data): ek kontrol, sorun varsa ValueError fırlatır. system: sistem prompt'u (isteğe bağlı)."""
+    check(data): ek kontrol, sorun varsa ValueError fırlatır. system: sistem prompt'u (isteğe bağlı).
+    allow_invalid: denemeler biterse şemaya uyan ama check'ten geçemeyen son yanıtı döndürür."""
     c = cfg["claude"]
     call = _call_cli if c["mode"] == "cli" else _call_api
     base = (prompt + "\n\nYanıt olarak YALNIZCA aşağıdaki JSON şemasına uyan geçerli JSON döndür, "
             "açıklama yazma:\n" + json.dumps(schema, ensure_ascii=False))
-    p, err = base, None
+    p, err, last_valid = base, None, None
     for attempt in range(c["max_retries"] + 1):
         t = time.time()
         text, usage = call(p, c, system)
@@ -80,6 +81,7 @@ def ask_json(prompt, schema, cfg, check=None, label="claude", system=None):
         try:
             data = extract_json(text)
             jsonschema.validate(data, schema)
+            last_valid = data
             if check:
                 check(data)
             return data
@@ -88,4 +90,7 @@ def ask_json(prompt, schema, cfg, check=None, label="claude", system=None):
             msg = getattr(e, "message", str(e))
             log.warning("[%s] geçersiz yanıt: %s", label, msg)
             p = base + f"\n\nÖNCEKİ YANITIN GEÇERSİZDİ: {msg}\nBu hatayı düzelterek tekrar yanıtla."
+    if allow_invalid and last_valid is not None:
+        log.warning("[%s] %d denemede düzelmedi, son yanıt işaretlenerek kullanılıyor: %s", label, c["max_retries"] + 1, err)
+        return last_valid
     raise RuntimeError(f"[{label}] {c['max_retries'] + 1} denemede geçerli JSON alınamadı: {err}")

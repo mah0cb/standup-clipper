@@ -1,7 +1,7 @@
 """6) Seçilen bitleri Türkçeye çevirir, ifade gruplarını kelime zamanlarına hizalar → translations.json."""
 from concurrent.futures import ThreadPoolExecutor
 
-from . import select_llm, transcribe
+from . import gapfill, select_llm, transcribe
 from .claude_client import ask_json
 from .common import cached, work_dir
 
@@ -52,6 +52,23 @@ def schema(cfg):
     }
 
 
+def uncovered(groups, n_words):
+    """Hiçbir grubun aralığına girmeyen kelime indeksleri."""
+    seen = set()
+    for g in groups:
+        seen.update(range(max(g["word_from"], 0), min(g["word_to"], n_words - 1) + 1))
+    return [i for i in range(n_words) if i not in seen]
+
+
+def check_coverage(groups, words):
+    """Kapsama kontrolü: her kelime bir gruba girmeli; eksikler adıyla bildirilir."""
+    miss = uncovered(groups, len(words))
+    if miss:
+        raise ValueError("şu kelimeler hiçbir altyazı grubunda yok, bunları da çevir: "
+                         + ", ".join(f'{i}:{words[i]["word"]}' for i in miss[:40]))
+    check_groups(groups, len(words))
+
+
 def check_groups(groups, n_words):
     """Grupların 0..n_words-1 aralığını sırayla, boşluksuz kapsadığını doğrular."""
     expect = 0
@@ -82,32 +99,41 @@ def align(groups, words):
              "en": " ".join(w["word"] for w in words[g["word_from"]:g["word_to"] + 1])} for g in groups]
 
 
-def bit_words(bit, all_words):
-    return all_words[bit["start_word"]:bit["end_word"] + 1]
+def bit_words(bit, all_words, extra=()):
+    """Bitin kelimeleri + gapfill ile kurtarılanlar, zamana göre sıralı."""
+    return sorted(all_words[bit["start_word"]:bit["end_word"] + 1] + list(extra), key=lambda w: w["start"])
 
 
-def translate_bit(bit, all_words, cfg):
-    words = bit_words(bit, all_words)
+def translate_bit(bit, all_words, cfg, extra=()):
+    words = bit_words(bit, all_words, extra)
     s = cfg["subs"]
     prompt = PROMPT.format(last=len(words) - 1, max_lines=s["max_lines"], max_chars=s["max_chars"],
                            words="\n".join(f'{i}:{w["word"]} [{w["start"]}]' for i, w in enumerate(words)))
 
     def check(d):
-        check_groups(d["groups"], len(words))
         check_text(d, len(words))
+        for g in d["groups"]:
+            if not 0 <= g["word_from"] <= g["word_to"] < len(words):
+                raise ValueError(f"grup indeksi geçersiz: {g['word_from']}-{g['word_to']}")
+        check_coverage(d["groups"], words)
 
+    # Kapsama 2 yeniden denemede düzelmezse son yanıt kullanılır, eksik kelimeler onay sayfasında kırmızı görünür
     d = ask_json(prompt, schema(cfg), cfg, check, label=f"çeviri #{bit['n']}",
-                 system=SYSTEM.format(note_max=s["note_max_chars"]))
+                 system=SYSTEM.format(note_max=s["note_max_chars"]), allow_invalid=True)
+    check_text(d, len(words))
+    miss = uncovered(d["groups"], len(words))
     return {"groups": align(d["groups"], words),
             "notes": [{"start": words[nt["word"]]["start"], "text": nt["text"]} for nt in d["notes"]],
-            "replacements": d["replacements"]}
+            "replacements": d["replacements"],
+            "uncovered": [{"start": words[i]["start"], "end": words[i]["end"], "word": words[i]["word"]} for i in miss]}
 
 
 def run(video, cfg, force=False):
     def make():
         _, words = transcribe.run(video, cfg)
         bits = select_llm.run(video, cfg)
+        extra = gapfill.run(video, cfg)
         with ThreadPoolExecutor(cfg["claude"]["parallel"]) as ex:
-            res = list(ex.map(lambda b: translate_bit(b, words, cfg), bits))
+            res = list(ex.map(lambda b: translate_bit(b, words, cfg, extra.get(str(b["n"]), [])), bits))
         return {str(b["n"]): r for b, r in zip(bits, res)}
     return cached(work_dir(video) / "translations.json", make, force)

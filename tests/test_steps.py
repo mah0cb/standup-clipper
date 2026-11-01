@@ -145,3 +145,42 @@ def test_proofread_keeps_times(monkeypatch):
     out = proofread.proofread_bit({"n": 1}, tr, load_config())
     assert out["groups"][0] == {"start": 1, "end": 2, "en": "hi", "lines": ["Selam"]}
     assert out["notes"] == [] and out["changes"][0]["type"] == "yazım"
+
+
+def test_uncovered_and_coverage_message():
+    words = [{"start": i, "end": i + 0.5, "word": f"w{i}"} for i in range(5)]
+    groups = [{"word_from": 0, "word_to": 1}, {"word_from": 3, "word_to": 4}]
+    assert translate.uncovered(groups, 5) == [2]
+    with pytest.raises(ValueError, match="2:w2"):
+        translate.check_coverage(groups, words)
+
+
+def test_translate_retries_coverage_then_marks(monkeypatch):
+    from clipper import claude_client
+    words = [{"start": float(i), "end": i + 0.5, "word": f"w{i}"} for i in range(4)]
+    gapped = {"groups": [{"word_from": 0, "word_to": 1, "lines": ["a"]}, {"word_from": 3, "word_to": 3, "lines": ["b"]}],
+              "notes": [], "replacements": []}
+    prompts = []
+
+    def fake_call(p, c, system=None):
+        prompts.append(p)
+        return json.dumps(gapped), "test"
+
+    monkeypatch.setattr(claude_client, "_call_cli", fake_call)
+    cfg = load_config()
+    cfg["claude"]["mode"] = "cli"
+    out = translate.translate_bit({"n": 1, "start_word": 0, "end_word": 3}, words, cfg)
+    assert len(prompts) == 3 and "2:w2" in prompts[1]  # eksik kelime adıyla yeniden istendi
+    assert out["uncovered"] == [{"start": 2.0, "end": 2.5, "word": "w2"}]  # 2 denemeden sonra işaretlendi
+
+
+def test_bit_words_merges_recovered():
+    words = [{"start": 0.0, "end": 1, "word": "a"}, {"start": 5.0, "end": 6, "word": "c"}]
+    got = translate.bit_words({"start_word": 0, "end_word": 1}, words, [{"start": 3.0, "end": 4, "word": "b", "recovered": True}])
+    assert [w["word"] for w in got] == ["a", "b", "c"]
+
+
+def test_find_gaps():
+    from clipper import gapfill
+    words = [{"start": 1.0, "end": 2.0}, {"start": 2.2, "end": 3.0}, {"start": 8.0, "end": 9.0}]
+    assert gapfill.find_gaps(words, 0.0, 12.0, 2.0) == [(3.0, 8.0), (9.0, 12.0)]

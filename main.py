@@ -10,16 +10,16 @@ import sys
 import time
 from pathlib import Path
 
-from clipper import (audio, candidates, laughter, proofread, reframe, render, review, select_llm,
+from clipper import (audio, candidates, gapfill, laughter, proofread, reframe, render, review, select_llm,
                      subtitles, transcribe, translate)
 from clipper.common import ROOT, load_config, read_json, work_dir, write_json
 
 STEPS = {
     "audio": audio, "transcribe": transcribe, "laughter": laughter, "candidates": candidates,
-    "select": select_llm, "translate": translate, "proofread": proofread, "subtitles": subtitles, "reframe": reframe,
+    "select": select_llm, "gapfill": gapfill, "translate": translate, "proofread": proofread, "subtitles": subtitles, "reframe": reframe,
     "render": render, "review": review,
 }
-RUN_STEPS = ["audio", "transcribe", "laughter", "candidates", "select", "translate", "proofread", "subtitles", "reframe"]
+RUN_STEPS = ["audio", "transcribe", "laughter", "candidates", "select", "gapfill", "translate", "proofread", "subtitles", "reframe"]
 
 
 def timed(name, video, cfg, force=False):

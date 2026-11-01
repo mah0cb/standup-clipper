@@ -31,6 +31,11 @@ select:
   min_score: 6             # bu puanın altındaki bitler seçilmez
   context_before: 60       # Claude'a aday başlangıcından önce verilecek bağlam (sn)
 
+gapfill:                   # seçilen bitlerde Whisper'ın atladığı konuşmayı VAD'sız yeniden dene
+  min_gap: 2.0             # bundan uzun kelimesiz aralıklar yeniden transkribe edilir (sn)
+  min_word_prob: 0.5       # sessizlikte uydurulan kelimeleri elemek için
+  max_no_speech: 0.6
+
 subs:
   font: Montserrat ExtraBold      # fonts/ klasöründen yüklenir
   fallback_font: Arial Black
@@ -47,7 +52,7 @@ subs:
   credit_margin_v: 90
   max_chars: 38
   max_lines: 2
-  note_size: 46             # açıklama notu (ör. "CPR = kalp masajı"), üstte, hook'un altında
+  note_size: 58             # açıklama notu (ör. "CPR = kalp masajı"), üstte, hook'un altında
   note_margin_v: 400
   note_secs: 2.5
   note_max_chars: 40
