@@ -1,7 +1,9 @@
 """Ortak yardımcılar: config, çalışma klasörü, JSON cache."""
+import functools
 import json
 import logging
 import re
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -46,3 +48,12 @@ def cached(path, fn, force=False):
 
 def words_in(words, start, end):
     return [w for w in words if w["start"] >= start - 0.05 and w["end"] <= end + 0.05]
+
+
+@functools.lru_cache
+def video_info(video):
+    """Video genişliği, yüksekliği ve fps'i ("24000/1001" biçiminde, ffmpeg'e olduğu gibi verilir)."""
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                          "stream=width,height,r_frame_rate", "-of", "csv=p=0", str(video)],
+                         capture_output=True, text=True, check=True).stdout.split()[0].split(",")
+    return {"w": int(out[0]), "h": int(out[1]), "fps": out[2]}

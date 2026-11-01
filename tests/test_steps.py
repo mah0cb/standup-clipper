@@ -184,3 +184,45 @@ def test_find_gaps():
     from clipper import gapfill
     words = [{"start": 1.0, "end": 2.0}, {"start": 2.2, "end": 3.0}, {"start": 8.0, "end": 9.0}]
     assert gapfill.find_gaps(words, 0.0, 12.0, 2.0) == [(3.0, 8.0), (9.0, 12.0)]
+
+
+def test_shots_from_cuts():
+    c = {"min_shot": 1.0, "smooth_window": 1}
+    samples = [(0.5, 500.0), (1.0, 520.0), (6.0, 1400.0), (6.5, 1420.0)]
+    shots = reframe.shots_from([0.3, 5.0, 9.2], samples, 10.0, 1920, 1080, c)
+    # 0.3 (çok kısa) ve 9.2 (sona çok yakın) birleşti → 2 çekim
+    assert [s["t"] for s in shots] == [0.0, 5.0]
+    assert shots[0]["x"] < shots[1]["x"]
+    no_face = reframe.shots_from([5.0], [(6.0, 1400.0)], 10.0, 1920, 1080, c)
+    assert no_face[0]["x"] == no_face[1]["x"]  # yüzsüz ilk çekim bulunan konumu kullanır
+
+
+def test_crop_x_expr():
+    assert reframe.crop_x_expr([{"t": 0, "x": 100}]) == "100"
+    assert reframe.crop_x_expr([{"t": 0, "x": 100}, {"t": 4.5, "x": 300}, {"t": 9, "x": 50}]) == \
+        "if(lt(t,4.5),100,if(lt(t,9),300,50))"
+
+
+def test_should_upscale():
+    from clipper import render
+    assert render.should_upscale("auto", "crop", 1012)
+    assert not render.should_upscale("auto", "crop", 1920)
+    assert not render.should_upscale("auto", "blur_bg", 1012)
+    assert render.should_upscale("always", "crop", 2160)
+    assert not render.should_upscale("off", "crop", 500)
+
+
+def test_main_position_blur_bg_below_video():
+    s = load_config()["subs"]
+    align, margin = subtitles.main_position("blur_bg", 1920, 1012, s)
+    assert align == 8 and margin == (1920 - 570) // 2 + 570 + s["below_video_gap"]  # video 1080x570, ortada
+    assert subtitles.main_position("crop", 1920, 1012, s) == (2, s["margin_v"])
+
+
+def test_encode_args():
+    from clipper import render
+    cfg = load_config()
+    nv = render.encode_args(cfg, "h264_nvenc")
+    assert nv[nv.index("-cq") + 1] == "19" and "+faststart" in nv and "yuv420p" in nv and "192k" in nv
+    x = render.encode_args(cfg, "libx264")
+    assert x[x.index("-crf") + 1] == "18" and x[x.index("-preset") + 1] == "veryfast"

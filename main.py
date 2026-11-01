@@ -22,9 +22,9 @@ STEPS = {
 RUN_STEPS = ["audio", "transcribe", "laughter", "candidates", "select", "gapfill", "translate", "proofread", "subtitles", "reframe"]
 
 
-def timed(name, video, cfg, force=False):
+def timed(name, video, cfg, force=False, **kw):
     t = time.time()
-    STEPS[name].run(video, cfg, force=force)
+    STEPS[name].run(video, cfg, force=force, **kw)
     dt = round(time.time() - t, 1)
     p = work_dir(video) / "timings.json"
     tm = read_json(p) if p.exists() else {}
@@ -45,7 +45,10 @@ def main():
     r.add_argument("video")
     r.add_argument("--comedian", default="", help="Altta görünecek komedyen adı")
     r.add_argument("--no-review", action="store_true", help="Onay sayfasını açma")
-    sub.add_parser("render", help="Onaylanan klipleri render et").add_argument("video")
+    rd = sub.add_parser("render", help="Onaylanan klipleri render et")
+    rd.add_argument("video")
+    rd.add_argument("--layout", choices=["crop", "blur_bg"], help="Düzen (varsayılan: config render.layout)")
+    rd.add_argument("--upscale", choices=["auto", "always", "off"], help="Real-ESRGAN (varsayılan: config upscale.mode)")
     s = sub.add_parser("step", help="Tek adımı yeniden çalıştır")
     s.add_argument("name", choices=list(STEPS))
     s.add_argument("video")
@@ -67,7 +70,7 @@ def main():
         if not a.no_review:
             review.run(a.video, cfg)
     elif a.cmd == "render":
-        timed("render", a.video, cfg)
+        timed("render", a.video, cfg, layout=a.layout, upscale=a.upscale)
     else:
         timed(a.name, a.video, cfg, force=True)
 

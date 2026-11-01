@@ -1,4 +1,4 @@
-"""8) MediaPipe yüz tespitiyle 9:16 crop koordinatları → reframe.json."""
+"""8) Çekim (kamera açısı) bazlı 9:16 crop: PySceneDetect ile kesmeler, her çekimde MediaPipe yüz merkezi → reframe.json."""
 import statistics
 
 import cv2
@@ -21,7 +21,7 @@ def crop_box(centers, W, H, window):
     """Yüz merkezlerinden (piksel, x) crop kutusu. Yüz yoksa merkez crop."""
     cw = min(W, int(H * 9 / 16)) // 2 * 2
     ch = min(H, int(cw * 16 / 9)) // 2 * 2
-    # ponytail: klip başına tek (medyan) x; komedyen sahnede çok gezerse sendcmd ile dinamik crop'a geçilir
+    # ponytail: çekim başına tek (medyan) x; çekim içinde komedyen çok gezerse kare kare takip eklenebilir
     cx = statistics.median(smooth(centers, window)) if centers else W / 2
     x = int(min(max(cx - cw / 2, 0), W - cw)) // 2 * 2
     return {"x": x, "y": (H - ch) // 2 // 2 * 2, "w": cw, "h": ch}
@@ -50,6 +50,7 @@ def face_centers(video, start, end, c):
     cap.set(cv2.CAP_PROP_POS_MSEC, start * 1000)
     centers, checked, i = [], 0, 0
     while cap.get(cv2.CAP_PROP_POS_MSEC) <= end * 1000 and cap.grab():
+        t = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000 - start
         if i % c["every_n"] == 0:
             _, frame = cap.retrieve()
             img = Image(image_format=ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
@@ -57,7 +58,7 @@ def face_centers(video, start, end, c):
             for det in dets:
                 x = pick_face(det.detect(img).detections, H, c["max_face_y"])
                 if x is not None:
-                    centers.append(x)
+                    centers.append((t, x))
                     break
         i += 1
     cap.release()
@@ -66,13 +67,53 @@ def face_centers(video, start, end, c):
     return centers, checked, W, H
 
 
+def detect_cuts(video, start, end, c):
+    """Klip içindeki kamera açısı değişimleri (klip başına göre sn)."""
+    from scenedetect import ContentDetector, detect
+
+    scenes = detect(str(video), ContentDetector(threshold=c["scene_threshold"]), start_time=start, end_time=end)
+    return [round(a.seconds - start, 3) for a, _ in scenes[1:]]
+
+
+def shots_from(cuts, samples, dur, W, H, c):
+    """Kesmelerden çekimler; her çekimin crop x'i o çekimdeki yüzlerden. Çok kısa çekimler öncekiyle birleşir.
+    Yüz bulunamayan çekim önceki çekimin konumunu kullanır (ilkse merkez)."""
+    bounds = [0.0]
+    for t in cuts:
+        if t - bounds[-1] >= c["min_shot"] and dur - t >= c["min_shot"]:
+            bounds.append(t)
+    bounds.append(dur)
+    shots, prev = [], None
+    for a, b in zip(bounds, bounds[1:]):
+        xs = [x for t, x in samples if a <= t < b]
+        x = crop_box(xs, W, H, c["smooth_window"])["x"] if xs else prev
+        shots.append({"t": round(a, 3), "x": x, "faces": len(xs)})
+        prev = x
+    center = crop_box([], W, H, 1)["x"]
+    for s in shots:  # baştaki yüzsüz çekimler: ilk bulunan konum, hiç yoksa merkez
+        if s["x"] is None:
+            s["x"] = next((o["x"] for o in shots if o["x"] is not None), center)
+    return shots
+
+
+def crop_x_expr(shots):
+    """ffmpeg crop x ifadesi: çekim değiştikçe x değişir (t, klip başından itibaren sn)."""
+    expr = str(shots[-1]["x"])
+    for cur, nxt in zip(reversed(shots[:-1]), reversed(shots[1:])):
+        expr = f"if(lt(t,{nxt['t']}),{cur['x']},{expr})"
+    return expr
+
+
 def run(video, cfg, force=False):
     def make():
         c, out = cfg["reframe"], {}
         for b in select_llm.run(video, cfg):
-            centers, checked, W, H = face_centers(video, b["start"], b["end"], c)
-            box = crop_box(centers, W, H, c["smooth_window"])
-            log.info("Bit #%d: %d/%d karede yüz bulundu → crop x=%d", b["n"], len(centers), checked, box["x"])
-            out[str(b["n"])] = {**box, "src_w": W, "src_h": H, "faces": len(centers), "checked": checked}
+            samples, checked, W, H = face_centers(video, b["start"], b["end"], c)
+            cuts = detect_cuts(video, b["start"], b["end"], c)
+            shots = shots_from(cuts, samples, b["end"] - b["start"], W, H, c)
+            box = crop_box([x for _, x in samples], W, H, c["smooth_window"])
+            log.info("Bit #%d: %d/%d karede yüz, %d çekim → crop x %s", b["n"], len(samples), checked,
+                     len(shots), [s["x"] for s in shots])
+            out[str(b["n"])] = {**box, "shots": shots, "src_w": W, "src_h": H, "faces": len(samples), "checked": checked}
         return out
     return cached(work_dir(video) / "reframe.json", make, force)

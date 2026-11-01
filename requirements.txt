@@ -15,4 +15,6 @@ PyYAML==6.0.3
 jsonschema==4.26.0
 anthropic==2.3.0
 python-dotenv==1.2.4
+scenedetect==0.7.2
 pytest==9.2.0
+# Yalnızca tools/convert_realesrgan.py için (bir kez): pnnx==20261020
