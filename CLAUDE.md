@@ -51,7 +51,7 @@ python main.py step <adim> <video>       # tek adımı zorla yeniden çalıştı
 - Komedyen adı dosya adından standart büyük harfle (yabancı isimler: "ismo" → "Ismo").
 
 ## Bilinen sorunlar
-- Upscale yavaş: RTX 4060'ta ~4.4 kare/sn (85 sn'lik klip ≈ 6 dk), geçici kareler birkaç GB.
+- Upscale yavaş: RTX 4060'ta ~7.9 kare/sn (85 sn'lik klip ≈ 5.3 dk toplam), geçici kareler birkaç GB.
 - Crop çekim içinde sabit; komedyen tek çekimde çok gezerse kadrajdan kayabilir.
 - Whisper bazen kahkaha altındaki konuşmayı atlar; gapfill kısmen kurtarır.
 - `claude -p` kullanım limitine takılırsa adım hata verir; limit sıfırlanınca aynı komut cache'ten devam eder.
