@@ -12,6 +12,24 @@ import jsonschema
 from .common import ROOT, log
 
 
+LIMIT_RE = re.compile(r"limit|429|quota", re.I)
+
+
+class ClaudeLimitError(RuntimeError):
+    """Claude kullanım/hız limiti: iş daha sonra kaldığı yerden yeniden denenebilir."""
+
+
+def _cli_error(p):
+    try:
+        out = json.loads(p.stdout)
+        msg = str(out.get("result") or out.get("subtype") or "") + f" (api_error_status={out.get('api_error_status')})"
+    except ValueError:
+        msg = p.stderr.strip() or p.stdout[:500]
+    if LIMIT_RE.search(msg):
+        return ClaudeLimitError(f"Claude limiti doldu: {msg}")
+    return RuntimeError(f"claude CLI hata verdi ({p.returncode}): {msg}")
+
+
 def extract_json(text):
     """Yanıttaki ilk JSON nesnesini/dizisini çıkarır (``` blokları dahil)."""
     m = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
@@ -35,12 +53,23 @@ def _call_cli(prompt, c, system=None):
         p = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
                            encoding="utf-8", timeout=c["timeout"], cwd=tmp)
     if p.returncode != 0:
-        raise RuntimeError(f"claude CLI hata verdi ({p.returncode}): {p.stderr.strip() or p.stdout[:500]}")
+        raise _cli_error(p)
     out = json.loads(p.stdout)
     if out.get("is_error"):
-        raise RuntimeError(f"claude CLI hata: {out.get('result')}")
+        raise _cli_error(p)
     cost = out.get("total_cost_usd")
     return out["result"], (f"abonelik (eşdeğer ${cost:.4f})" if cost is not None else "abonelik")
+
+
+def _api_create(client, c, prompt, system):
+    # Stand-up metinleri küfür içerebilir: ret durumunda sunucu taraflı yedek modele geçiş açık
+    return client.beta.messages.create(
+        model=c["model"], max_tokens=16000,
+        output_config={"effort": c.get("effort", "high")},
+        betas=["server-side-fallback-2026-07-01"], fallbacks="default",
+        **({"system": system} if system else {}),
+        messages=[{"role": "user", "content": prompt}],
+    )
 
 
 def _call_api(prompt, c, system=None):
@@ -49,14 +78,10 @@ def _call_api(prompt, c, system=None):
 
     load_dotenv(ROOT / ".env")
     client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-    # Stand-up metinleri küfür içerebilir: ret durumunda sunucu taraflı yedek modele geçiş açık
-    resp = client.beta.messages.create(
-        model=c["model"], max_tokens=16000,
-        output_config={"effort": c.get("effort", "high")},
-        betas=["server-side-fallback-2026-07-01"], fallbacks="default",
-        **({"system": system} if system else {}),
-        messages=[{"role": "user", "content": prompt}],
-    )
+    try:
+        resp = _api_create(client, c, prompt, system)
+    except anthropic.RateLimitError as e:
+        raise ClaudeLimitError(f"Claude limiti doldu: {e}") from e
     if resp.stop_reason == "refusal":
         raise RuntimeError("Claude isteği reddetti (refusal)")
     text = "".join(b.text for b in resp.content if b.type == "text")

@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Standup Clipper</title>
+<style>
+  :root { --bg:#1c1917; --card:#292524; --fg:#f5f5f4; --mut:#a8a29e; --line:#44403c; --acc:#ca8a04; --bad:#ef4444; --ok:#22c55e; --info:#60a5fa; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.45 system-ui, sans-serif; }
+  header { position:sticky; top:0; z-index:2; background:var(--bg); border-bottom:1px solid var(--line); padding:10px 16px; display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; margin-right:auto; }
+  nav a { color:var(--mut); text-decoration:none; padding:6px 10px; border-radius:6px; }
+  nav a.on { color:var(--fg); background:var(--card); }
+  main { max-width:1200px; margin:0 auto; padding:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:14px; }
+  .card.off { opacity:.5; } .card.warn { border-color:var(--bad); }
+  .mut { color:var(--mut); font-size:13px; }
+  .bad { color:var(--bad); font-weight:600; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  button, .btn { font:600 14px system-ui; padding:7px 12px; border:0; border-radius:7px; background:var(--acc); color:#fff; cursor:pointer; }
+  button.sec { background:var(--line); color:var(--fg); }
+  button:disabled { opacity:.4; cursor:default; }
+  input, select, textarea { font:inherit; color:inherit; background:transparent; border:1px solid var(--line); border-radius:6px; padding:6px 8px; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  th { color:var(--mut); font-weight:500; font-size:13px; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:99px; font-size:12px; font-weight:600; background:var(--line); }
+  .s-sırada { background:#3f3f46; } .s-işleniyor { background:var(--info); color:#000; } .s-onay { background:var(--acc); }
+  .s-render { background:var(--ok); color:#000; } .s-hata { background:var(--bad); }
+  #drop { border:2px dashed var(--line); border-radius:10px; padding:18px; text-align:center; }
+  #drop.over { border-color:var(--acc); background:#ca8a0418; }
+  pre#log { background:#0c0a09; border:1px solid var(--line); border-radius:8px; padding:10px; height:420px; overflow:auto; font:12px/1.4 ui-monospace, monospace; white-space:pre-wrap; }
+  .steps { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:8px; }
+  .step { border:1px solid var(--line); border-radius:8px; padding:8px; }
+  .step.done { border-color:var(--ok); } .step.cur { border-color:var(--info); box-shadow:0 0 0 1px var(--info) inset; }
+  .grp { display:grid; grid-template-columns:70px 1fr; gap:8px; padding:6px 0; border-top:1px dashed var(--line); }
+  .grp textarea { width:100%; font:14px/1.3 ui-monospace, monospace; resize:vertical; }
+  .grp textarea.badline { border-color:var(--bad); }
+  .en { grid-column:2; font-size:12px; color:var(--mut); }
+  .rev { display:grid; grid-template-columns:minmax(0, 1fr) 300px; gap:14px; }
+  .rev video { width:100%; border-radius:8px; background:#000; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:14px; }
+  .grid video { width:100%; aspect-ratio:9/16; background:#000; border-radius:8px; }
+  .grid textarea { width:100%; height:110px; font-size:13px; }
+  .hook { width:100%; font:600 16px system-ui; margin:6px 0; }
+  .err { border:1px solid var(--bad); background:#ef444418; border-radius:8px; padding:10px; margin:10px 0; }
+  label { cursor:pointer; }
+  a { color:var(--acc); }
+  @media (max-width:760px) { .rev { grid-template-columns:1fr; } .hide-sm { display:none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Standup Clipper</h1>
+  <nav>
+    <a href="#/library" data-p="library">Kütüphane</a>
+    <a href="#/jobs" data-p="jobs">İşleme</a>
+    <a href="#/outputs" data-p="outputs">Çıktılar</a>
+    <a href="#/settings" data-p="settings">Ayarlar</a>
+  </nav>
+</header>
+<main id="app"></main>
+<script>
+const STEPS = ["audio", "transcribe", "laughter", "candidates", "select", "gapfill", "translate", "proofread", "subtitles", "reframe"];
+const STEP_TR = { audio: "Ses", transcribe: "Transkript", laughter: "Kahkaha", candidates: "Adaylar", select: "Seçim (Claude)",
+  gapfill: "Kaçan konuşma", translate: "Çeviri (Claude)", proofread: "Çeviri kontrolü", subtitles: "Altyazı", reframe: "Kadraj", render: "Render" };
+const STATUS_TR = { queued: "sırada", running: "işleniyor", done: "tamamlandı", error: "hata", limit: "Claude limiti" };
+const app = document.getElementById("app");
+let timer = null, es = null;
+
+const $ = (t, a = {}, ...kids) => { const e = document.createElement(t); for (const [k, v] of Object.entries(a)) { if (k === "dataset") Object.assign(e.dataset, v); else e[k] = v; } e.append(...kids.filter(k => k != null)); return e; };
+const fmt = s => s == null ? "–" : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const enc = encodeURIComponent;
+async function api(url, opts = {}) {
+  const r = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts, body: opts.body && typeof opts.body !== "string" && !(opts.body instanceof FormData) ? JSON.stringify(opts.body) : opts.body });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || r.statusText);
+  return j;
+}
+const badge = s => $("span", { className: "badge s-" + s.split(" ")[0], textContent: s });
+
+function route() {
+  clearInterval(timer); if (es) { es.close(); es = null; }
+  const [, page = "library", arg] = location.hash.split("/");
+  document.querySelectorAll("nav a").forEach(a => a.classList.toggle("on", a.dataset.p === (page === "job" ? "jobs" : page)));
+  app.replaceChildren();
+  ({ library, jobs, job: jobPage, review: reviewPage, outputs: outputsPage, settings: settingsPage }[page] || library)(arg && decodeURIComponent(arg));
+}
+window.addEventListener("hashchange", route);
+
+/* ---------- Kütüphane ---------- */
+function library() {
+  const comedian = $("input", { id: "comedian", placeholder: "Komedyen (ör. Zoltan Kaszas)" });
+  const show = $("input", { id: "show", placeholder: "Gösteri (ör. London Fog)" });
+  const file = $("input", { id: "file", type: "file", accept: "video/*", hidden: true });
+  const msg = $("span", { id: "upmsg", className: "mut" });
+  const drop = $("div", { id: "drop" }, $("div", { textContent: "Videoyu buraya sürükleyin ya da " }, $("a", { href: "#", textContent: "seçin", onclick: e => { e.preventDefault(); file.click(); } })), file);
+  let picked = null;
+  const pick = f => { picked = f; msg.textContent = `Seçildi: ${f.name} (${(f.size / 1e6).toFixed(0)} MB)`; };
+  file.onchange = () => file.files[0] && pick(file.files[0]);
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+  drop.ondragleave = () => drop.classList.remove("over");
+  drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) pick(e.dataTransfer.files[0]); };
+  const up = $("button", { id: "upload", textContent: "Ekle", onclick: () => {
+    if (!picked || !comedian.value.trim() || !show.value.trim()) { msg.textContent = "Video, komedyen ve gösteri adı gerekli."; return; }
+    const fd = new FormData(); fd.append("file", picked); fd.append("comedian", comedian.value); fd.append("show", show.value);
+    const x = new XMLHttpRequest(); x.open("POST", "/api/videos/upload");
+    x.upload.onprogress = e => msg.textContent = `Yükleniyor… %${Math.round(100 * e.loaded / e.total)}`;
+    x.onload = () => { const j = JSON.parse(x.responseText || "{}"); msg.textContent = x.status === 200 ? `Eklendi: ${j.name}` : "Hata: " + (j.detail || x.status); if (x.status === 200) { picked = null; load(); } };
+    x.send(fd);
+  } });
+  const tbody = $("tbody");
+  app.append($("div", { className: "card" }, drop, $("div", { className: "row", style: "margin-top:10px" }, comedian, show, up, msg),
+    $("div", { className: "mut", textContent: 'Dosya adı otomatik "komedyen__gosteri.mp4" olur.' })),
+    $("div", { className: "card" }, $("table", {}, $("thead", {}, $("tr", {}, ...["Video", "Komedyen", "Gösteri", "Süre", "Çözünürlük", "Durum", ""].map(h => $("th", { textContent: h })))), tbody)));
+  async function load() {
+    const vids = await api("/api/videos");
+    tbody.replaceChildren(...vids.map(v => {
+      const res = v.width ? `${v.width}×${v.height}` : "–";
+      const start = $("button", { className: "start", textContent: "Başlat", disabled: ["sırada", "işleniyor"].includes(v.status),
+        onclick: async () => { const j = await api(`/api/videos/${enc(v.name)}/start`, { method: "POST", body: { comedian: v.comedian } }); location.hash = "#/job/" + j.id; } });
+      const rev = $("button", { className: "review sec", textContent: "Onay", disabled: !["onay bekliyor", "render edildi"].includes(v.status), onclick: () => location.hash = "#/review/" + enc(v.name) });
+      const ren = $("button", { className: "render sec", textContent: "Render", disabled: !["onay bekliyor", "render edildi"].includes(v.status),
+        onclick: async () => { const j = await api(`/api/videos/${enc(v.name)}/render`, { method: "POST", body: {} }); location.hash = "#/job/" + j.id; } });
+      const outs = $("button", { className: "outs sec", textContent: `Çıktılar (${v.outputs})`, disabled: !v.outputs, onclick: () => location.hash = "#/outputs/" + enc(v.name.replace(/\.[^.]+$/, "")) });
+      const st = $("td", {}, badge(v.status));
+      if (v.job && ["queued", "running", "error", "limit"].includes(v.job.status)) st.append(" ", $("a", { href: "#/job/" + v.job.id, textContent: "ayrıntı", className: "mut" }));
+      if (v.bits != null) st.append($("div", { className: "mut", textContent: `${v.bits} bit` }));
+      return $("tr", { className: "video", dataset: { name: v.name } },
+        $("td", { textContent: v.name }), $("td", { textContent: v.comedian }), $("td", { textContent: v.show || "–" }),
+        $("td", { textContent: fmt(v.duration) }),
+        $("td", {}, res, v.low_res ? $("div", { className: "bad", textContent: "Düşük çözünürlük (<720p)" }) : null),
+        st, $("td", {}, $("div", { className: "row" }, start, rev, ren, outs)));
+    }));
+  }
+  load(); timer = setInterval(load, 3000);
+}
+
+/* ---------- İşleme ---------- */
+async function jobs() {
+  const list = await api("/api/jobs");
+  app.append($("div", { className: "card" }, $("h2", { textContent: "İşler", style: "margin-top:0;font-size:17px" }),
+    list.length ? $("table", {}, $("tbody", {}, ...list.map(j => $("tr", {},
+      $("td", {}, $("a", { href: "#/job/" + j.id, textContent: j.video, style: "color:var(--fg)" })),
+      $("td", { textContent: j.kind === "render" ? "render" : "işleme" }),
+      $("td", {}, badge(STATUS_TR[j.status])), $("td", { className: "mut", textContent: j.created.replace("T", " ") }))))) : $("div", { className: "mut", textContent: "Henüz iş yok." })));
+  timer = setInterval(() => { if (location.hash.startsWith("#/jobs")) route(); }, 5000);
+}
+
+function jobPage(id) {
+  const head = $("div", { className: "row" }), steps = $("div", { className: "steps" }), errBox = $("div"), log = $("pre", { id: "log" });
+  app.append($("div", { className: "card" }, head, steps, errBox), $("div", { className: "card" }, $("div", { className: "mut", textContent: "Canlı log" }), log));
+  let job = null;
+  function draw(j) {
+    job = j;
+    const names = j.kind === "render" ? ["render"] : STEPS;
+    head.replaceChildren(...[$("strong", { textContent: j.video }), $("span", { className: "mut", textContent: j.kind === "render" ? "render" : "işleme" }), badge(STATUS_TR[j.status]),
+      j.status === "done" && j.kind === "process" ? $("button", { textContent: "Onaya git", onclick: () => location.hash = "#/review/" + enc(j.video) }) : null,
+      j.status === "done" && j.kind === "render" ? $("button", { textContent: "Çıktılara git", onclick: () => location.hash = "#/outputs/" + enc(j.video.replace(/\.[^.]+$/, "")) }) : null].filter(Boolean));
+    steps.replaceChildren(...names.map(n => $("div", { className: "step" + (n in j.steps ? " done" : "") + (j.current === n && j.status === "running" ? " cur" : "") },
+      $("div", { textContent: STEP_TR[n] || n }), $("div", { className: "mut", textContent: n in j.steps ? `${j.steps[n]} sn` : (j.current === n && j.status === "running" ? "çalışıyor…" : "–") }))));
+    errBox.replaceChildren();
+    if (j.status === "error" || j.status === "limit") {
+      const auto = $("input", { type: "checkbox", id: "autoretry", checked: j.auto_retry });
+      errBox.append($("div", { className: "err" },
+        $("div", { className: "bad", textContent: j.status === "limit" ? "Claude limiti doldu" : "Hata" }),
+        $("div", { textContent: j.error_tr || j.error }),
+        j.status === "limit" && j.retry_at ? $("div", { className: "mut", textContent: "Otomatik yeniden deneme: " + new Date(j.retry_at * 1000).toLocaleTimeString("tr-TR") }) : null,
+        $("div", { className: "row", style: "margin-top:8px" },
+          $("button", { id: "resume", textContent: "Kaldığı yerden devam et", onclick: async () => { await api(`/api/jobs/${id}/retry`, { method: "POST", body: { auto_retry: auto.checked } }); route(); } }),
+          j.status === "limit" ? $("label", {}, auto, " Limit sıfırlanınca otomatik yeniden dene (30 dk arayla)") : null)));
+    }
+  }
+  api(`/api/jobs/${id}`).then(j => {
+    draw(j);
+    es = new EventSource(`/api/jobs/${id}/stream`);
+    es.addEventListener("log", e => { log.textContent += JSON.parse(e.data) + "\n"; log.scrollTop = log.scrollHeight; });
+    es.addEventListener("job", e => draw(JSON.parse(e.data)));
+    es.onerror = () => { es.close(); es = null; };
+  }).catch(e => app.append($("div", { className: "err", textContent: e.message })));
+}
+
+/* ---------- Onay ---------- */
+async function reviewPage(name) {
+  let d;
+  try { d = await api(`/api/videos/${enc(name)}/review`); } catch (e) { app.append($("div", { className: "err", textContent: e.message })); return; }
+  const check = ta => { const ls = ta.value.split("\n").filter(l => l.trim()); ta.classList.toggle("badline", ls.length > 2 || ls.some(l => l.length > d.max_chars)); };
+  const layout = $("select", { id: "layout" }, ...[["", "Düzen: varsayılan"], ["crop", "crop"], ["blur_bg", "blur_bg"]].map(([v, t]) => $("option", { value: v, textContent: t })));
+  const upscale = $("select", { id: "upscale" }, ...[["", "Upscale: varsayılan"], ["auto", "auto"], ["always", "always"], ["off", "off"]].map(([v, t]) => $("option", { value: v, textContent: t })));
+  const msg = $("span", { id: "revmsg", className: "mut" });
+  async function save(render) {
+    const body = { approved: [], hooks: {}, lines: {}, render, layout: layout.value || null, upscale: upscale.value || null };
+    for (const c of app.querySelectorAll(".bit")) {
+      const n = c.dataset.n;
+      if (c.querySelector(".ok").checked) body.approved.push(+n);
+      body.hooks[n] = c.querySelector(".hook").value;
+      body.lines[n] = [...c.querySelectorAll("textarea.line")].map(t => t.value.split("\n"));
+    }
+    try { const j = await api(`/api/videos/${enc(name)}/review`, { method: "POST", body }); msg.textContent = `Kaydedildi (${body.approved.length} klip).`; if (j.job) location.hash = "#/job/" + j.job.id; }
+    catch (e) { msg.textContent = "Hata: " + e.message; }
+  }
+  app.append($("div", { className: "card row" }, $("strong", { textContent: name }), layout, upscale,
+    $("button", { id: "save", className: "sec", textContent: "Kaydet", onclick: () => save(false) }),
+    $("button", { id: "save-render", textContent: "Kaydet ve render et", onclick: () => save(true) }), msg));
+  const src = `/api/videos/${enc(name)}/file`;
+  for (const b of d.bits) {
+    const tr = d.translations[b.n] || { groups: [], notes: [], replacements: [], changes: [] };
+    const ok = $("input", { type: "checkbox", className: "ok", checked: d.approved.includes(b.n) });
+    const vid = $("video", { className: "prev", preload: "none", controls: true, src });
+    vid.ontimeupdate = () => { if (vid.dataset.stop && vid.currentTime >= +vid.dataset.stop) { vid.pause(); delete vid.dataset.stop; } };
+    const play = $("button", { className: "sec play", textContent: "▶ Aralığı oynat", onclick: () => { vid.currentTime = b.start; vid.dataset.stop = b.end; vid.play(); } });
+    const left = $("div", {},
+      $("div", { className: "row" }, $("label", {}, ok, ` Render et #${b.n}`), $("strong", { style: "color:var(--acc)", textContent: `${b.score}/10` }),
+        $("span", { className: "mut", textContent: `${fmt(b.start)} – ${fmt(b.end)} (${(b.end - b.start).toFixed(0)} sn)` })),
+      $("input", { className: "hook", value: b.hook_tr }), $("div", { className: "mut", textContent: b.reason }));
+    if ((tr.uncovered || []).length) left.append($("div", { className: "bad", textContent: "⚠ Altyazısız kalan kelimeler: " + tr.uncovered.map(w => `${w.word} @${fmt(w.start)}`).join(", ") }));
+    for (const nt of tr.notes || []) left.append($("div", { className: "mut", textContent: `Not @${fmt(nt.start)}: ${nt.text}` }));
+    if ((tr.replacements || []).length) left.append($("div", { className: "mut", textContent: "Uyarlamalar: " + tr.replacements.map(r => `${r.orig} → ${r.tr}`).join(", ") }));
+    if ((tr.changes || []).length) left.append($("details", {}, $("summary", { className: "mut", textContent: `Çeviri kontrolü: ${tr.changes.length} değişiklik` }),
+      ...tr.changes.map(c => $("div", { className: "mut", textContent: `[${c.type}] ${c.before} → ${c.after}` }))));
+    for (const g of tr.groups) {
+      const ta = $("textarea", { className: "line", rows: 2, value: g.lines.join("\n") });
+      ta.oninput = () => check(ta); check(ta);
+      left.append($("div", { className: "grp" }, $("span", { className: "mut", textContent: fmt(g.start) }), ta, $("div", { className: "en", textContent: g.en })));
+    }
+    const card = $("section", { className: "card bit rev" + ((tr.uncovered || []).length ? " warn" : ""), dataset: { n: b.n } }, left, $("div", {}, vid, play));
+    const sync = () => card.classList.toggle("off", !ok.checked); ok.onchange = sync; sync();
+    app.append(card);
+  }
+}
+
+/* ---------- Çıktılar ---------- */
+async function outputsPage(filter) {
+  const items = await api("/api/outputs");
+  const only = $("input", { type: "checkbox", id: "unshared" });
+  const grid = $("div", { className: "grid" });
+  const draw = () => grid.replaceChildren(...items.filter(o => (!filter || o.video === filter) && (!only.checked || !Object.keys(o.shares).length)).map(o => {
+    const shares = $("div", { className: "row" }, ...["youtube", "instagram", "tiktok"].map(p => {
+      const cb = $("input", { type: "checkbox", className: "share-" + p, checked: !!o.shares[p] });
+      cb.onchange = async () => { o.shares = { ...o.shares, ...(await api("/api/outputs/share", { method: "POST", body: { path: o.path, platform: p, done: cb.checked } })) }; if (!cb.checked) delete o.shares[p]; draw(); };
+      return $("label", { className: "mut" }, cb, ` ${{ youtube: "YouTube", instagram: "Instagram", tiktok: "TikTok" }[p]}${o.shares[p] ? " · " + o.shares[p] : ""}`);
+    }));
+    const txt = $("textarea", { readOnly: true, value: o.text });
+    return $("div", { className: "card out", dataset: { path: o.path } },
+      $("video", { controls: true, preload: "metadata", src: "/api/outputs/file?path=" + enc(o.path) }),
+      $("div", { style: "font-weight:600;margin-top:6px", textContent: o.hook }),
+      $("div", { className: "mut", textContent: `${o.video} · ${fmt(o.duration)}${o.score ? " · " + o.score + "/10" : ""}` }), txt,
+      $("div", { className: "row" },
+        $("button", { className: "copy sec", textContent: "Kopyala", onclick: async e => { await navigator.clipboard.writeText(o.text); e.target.textContent = "Kopyalandı"; } }),
+        $("button", { className: "reveal sec", textContent: "Klasörde göster", onclick: () => api("/api/outputs/reveal", { method: "POST", body: { path: o.path } }) })),
+      shares);
+  }));
+  only.onchange = draw;
+  app.append($("div", { className: "card row" }, $("strong", { textContent: filter ? `Çıktılar: ${filter}` : "Tüm çıktılar" }),
+    filter ? $("a", { href: "#/outputs", textContent: "tümünü göster", className: "mut" }) : null,
+    $("label", { className: "mut" }, only, " Henüz paylaşılmamış")), grid);
+  draw();
+}
+
+/* ---------- Ayarlar ---------- */
+async function settingsPage() {
+  const { values, fields } = await api("/api/settings");
+  const LABEL = { "render.layout": "Düzen", "upscale.mode": "Kalite yükseltme (Real-ESRGAN)", "laughter.threshold": "Kahkaha eşiği",
+    "select.max_bits": "Hedef bit sayısı (üst sınır)", "candidates.max_len": "Maks. klip uzunluğu (sn)", "subs.size": "Altyazı boyutu",
+    "subs.note_size": "Not boyutu", "claude.mode": "Claude modu", "claude.model": "Claude modeli" };
+  const inputs = {};
+  const rows = Object.entries(fields).map(([k, t]) => {
+    const el = Array.isArray(t) ? $("select", { name: k }, ...t.map(v => $("option", { value: v, textContent: v, selected: values[k] === v })))
+      : $("input", { name: k, value: values[k], type: t === "str" ? "text" : "number", step: t === "float" ? "0.05" : "1" });
+    inputs[k] = el;
+    return $("tr", {}, $("td", { textContent: LABEL[k] || k }), $("td", { className: "mut hide-sm", textContent: k }), $("td", {}, el));
+  });
+  const msg = $("span", { className: "mut", id: "setmsg" });
+  app.append($("div", { className: "card" }, $("table", {}, $("tbody", {}, ...rows)),
+    $("div", { className: "row", style: "margin-top:10px" }, $("button", { id: "save-settings", textContent: "Kaydet", onclick: async () => {
+      const body = Object.fromEntries(Object.entries(inputs).map(([k, el]) => [k, el.value]));
+      try { await api("/api/settings", { method: "POST", body }); msg.textContent = "Kaydedildi (config.yaml)."; } catch (e) { msg.textContent = "Hata: " + e.message; }
+    } }), msg)));
+}
+
+route();
+</script>
+</body>
+</html>

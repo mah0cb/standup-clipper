@@ -88,7 +88,7 @@ def test_candidates_never_start_mid_sentence():
 
 
 def test_comedian_from_filename():
-    import main
-    assert main.comedian_from_filename("samples/zoltan_kaszas__london_fog.mp4") == "Zoltan Kaszas"
-    assert main.comedian_from_filename("İlker_ayrık__gosteri.mkv") == "İlker Ayrık"
-    assert main.comedian_from_filename("ismo.mp4") == "Ismo"
+    from clipper.pipeline import comedian_from_filename as cf
+    assert cf("samples/zoltan_kaszas__london_fog.mp4") == "Zoltan Kaszas"
+    assert cf("İlker_ayrık__gosteri.mkv") == "İlker Ayrık"
+    assert cf("ismo.mp4") == "Ismo"
