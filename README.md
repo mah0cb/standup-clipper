@@ -4,8 +4,10 @@ Bilgisayardaki bir stand-up videosundan en komik bitleri **seyirci kahkahasına*
 Claude ile seçip Türkçeye çevirir ve **Türkçe karaoke altyazılı 9:16 dikey** kısa videolar üretir.
 
 ```
-video.mp4 → ses → transkript → kahkaha → adaylar → Claude seçimi → Claude çevirisi → Claude çeviri kontrolü
-          → ASS altyazı → yüz takipli crop → [onay sayfası] → render (mp4 + açıklama .txt)
+video.mp4 → ses → transkript → kahkaha → adaylar → Claude seçimi → kaçan konuşmayı kurtarma
+          → Claude çevirisi (+ kapsama kontrolü) → Claude çeviri kontrolü → ASS altyazı
+          → çekim bazlı yüz takipli crop → [onay sayfası]
+          → render: kes/kırp → [Real-ESRGAN] → 1080x1920 → altyazı (mp4 + açıklama .txt)
 ```
 
 ## Gereksinimler
@@ -37,6 +39,17 @@ curl.exe -L -o fonts\Montserrat-ExtraBold.ttf https://github.com/JulietaUla/Mont
 git clone --depth 1 https://github.com/jrgillick/laughter-detection models\laughter-detection
 ```
 
+Real-ESRGAN (kalite yükseltme, isteğe bağlı). `realesr-general-x4v3` resmi ncnn paketinde olmadığı için
+PyTorch ağırlığı bir kez ncnn'e dönüştürülür:
+
+```powershell
+curl.exe -L -o $env:TEMPesr.zip https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip
+Expand-Archive $env:TEMPesr.zip modelsealesrgan
+curl.exe -L -o modelsealesr-general-x4v3.pth https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth
+pip install pnnx
+python tools\convert_realesrgan.py modelsealesr-general-x4v3.pth modelsealesrgan\models
+```
+
 Whisper modeli (~3 GB) ilk çalıştırmada otomatik indirilir.
 
 `api` modunu kullanacaksanız `.env.example` dosyasını `.env` olarak kopyalayıp `ANTHROPIC_API_KEY` girin
@@ -52,11 +65,33 @@ python main.py run samples\gosteri.mp4 --comedian "Komedyen Adı"
 # "Kaydet"e basın, terminalde Ctrl+C ile sunucuyu kapatın. Sonra:
 python main.py render samples\gosteri.mp4
 
+# Düzen ve kalite yükseltme (varsayılanlar config.yaml'da):
+python main.py render samples\gosteri.mp4 --layout blur_bg
+python main.py render samples\gosteri.mp4 --layout crop --upscale always
+
+# Klasördeki tüm videoları sırayla işle (onay sayfası açılmaz; komedyen adı dosya adından:
+# "zoltan_kaszas__london_fog.mp4" → "Zoltan Kaszas"). Sonra istediğiniz videonun onay sayfasını açın:
+python main.py run-all samplespython main.py review samples\zoltan_kaszas__london_fog.mp4
+
 # Tek bir adımı yeniden çalıştırmak (önceki adımlar cache'ten gelir):
 python main.py step translate samples\gosteri.mp4
 ```
 
-Adım adları: `audio, transcribe, laughter, candidates, select, translate, proofread, subtitles, reframe, render, review`.
+Adım adları: `audio, transcribe, laughter, candidates, select, gapfill, translate, proofread, subtitles, reframe, render, review`.
+
+### Düzenler
+
+- `crop` — yüz takipli 9:16 kırpma. Kamera açısı değişimleri PySceneDetect ile bulunur, her çekimin kırpma
+  konumu ayrı hesaplanır.
+- `blur_bg` — yatay video 1080 genişlikte ortada; arka planı aynı videonun bulanık hali doldurur. Hook ve
+  notlar üstteki boşlukta, altyazı videonun hemen altında.
+
+### Kalite yükseltme (Real-ESRGAN)
+
+`upscale.mode: auto` iken kırpılan alan 1920 pikselden kısaysa (ör. 1080p kaynakta 1012 px) onaylanan
+klipler `realesr-general-x4v3` ile büyütülür; tam gösteri asla işlenmez. Kareler `work/{video}/frames/{n}/`
+altına çıkarılır, işlem bitince silinir (`upscale.keep_frames`). RTX 4060'ta ~4.4 kare/sn
+(85 sn'lik klip ≈ 8 dk). blur_bg düzeninde video zaten küçültüldüğü için büyütme yapılmaz.
 
 ### Çıktılar
 
@@ -67,10 +102,11 @@ Adım adları: `audio, transcribe, laughter, candidates, select, translate, proo
 | `work/{video}/laughter.json` | `[{start, end, prob}]` kahkaha aralıkları |
 | `work/{video}/candidates.json` | En iyi 40 aday (cümle başından kahkaha sonuna) |
 | `work/{video}/selected.json` | Claude'un seçtiği bitler (puan, gerekçe, hook, açıklama, hashtag) |
+| `work/{video}/gapfill.json` | Whisper'ın atladığı, VAD'sız yeniden transkripsiyonla kurtarılan kelimeler |
 | `work/{video}/translations.json` | Zamana hizalı Türkçe ifade grupları, açıklama notları, ABD→TR uyarlama listesi |
 | `work/{video}/translations_checked.json` | Çeviri kontrolünden geçmiş hali + yapılan değişiklikler (altyazı ve onay sayfası bunu kullanır) |
 | `work/{video}/subs/{n}.ass` | Karaoke altyazı |
-| `work/{video}/reframe.json` | 9:16 crop kutuları |
+| `work/{video}/reframe.json` | 9:16 crop kutusu + çekim bazlı x konumları |
 | `work/{video}/review.json` | Onaylanan klipler |
 | `work/{video}/timings.json` | Her adımın süresi |
 | `out/{video}/{n}_{hook}.mp4` + `.txt` | Dikey video + açıklama, 5 hashtag, komedyen adı |
@@ -95,9 +131,13 @@ Tüm modeller, eşikler, klip uzunlukları, font, renkler ve Claude modu buradad
   (torch 1.3, librosa 0.8) olduğundan doğrudan çalışmaz; `clipper/laughter.py` yalnızca reponun model
   tanımını ve checkpoint'ini kullanır, özellik çıkarımını yeni librosa API'siyle yapar. Model yüklenemezse
   otomatik olarak YAMNet'in (MediaPipe) kahkaha sınıflarına geçer (`laughter.backend: yamnet` ile zorlanabilir).
-- **Crop:** Her klip için yüz merkezlerinin yumuşatılmış medyanıyla sabit bir 9:16 kutu kullanılır.
-  Önce yakın çekim, yüz bulunamazsa uzak mesafe (full range) modeli denenir; karenin alt kısmındaki
-  yüzler seyirci sayılıp elenir (`reframe.max_face_y`). Hiç yüz yoksa merkez crop.
+- **Crop:** Her çekim için yüz merkezlerinin yumuşatılmış medyanı kullanılır. Önce yakın çekim, yüz
+  bulunamazsa uzak mesafe (full range) modeli denenir; karenin alt kısmındaki yüzler seyirci sayılıp elenir
+  (`reframe.max_face_y`). Yüz bulunamayan çekim bir önceki çekimin konumunu kullanır.
+- **Altyazı kapsaması:** Her Whisper kelimesi bir altyazı grubunda olmalı; eksik varsa çeviri eksik kelimeler
+  belirtilerek yeniden istenir, 2 denemede düzelmezse onay sayfasında kırmızıyla işaretlenir. Ayrıca seçilen
+  bitlerdeki kelimesiz boşluklar VAD kapalı yeniden transkribe edilir (`gapfill`).
+- **Yedek:** Proje git deposudur; `samples/`, `work/`, `out/`, `models/`, `.venv/`, `.env` hariç tutulur.
 - **Loglar:** Konsol + `clipper.log`. Her Claude çağrısının süresi (api modunda token ve maliyet) loglanır.
 
 ## Testler

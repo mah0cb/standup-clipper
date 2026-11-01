@@ -77,7 +77,9 @@ def render_bit(video, bit, box, ass_rel, out, layout, mode, cfg):
         # Büyütülmüş kareler (orijinal fps) + orijinal ses; altyazı en son
         ffmpeg(["-framerate", video_info(video)["fps"], "-i", str(frames / "%06d.jpg"),
                 "-ss", f"{bit['start']:.3f}", "-to", f"{bit['end']:.3f}", "-i", str(video),
-                "-map", "0:v", "-map", "1:a:0", "-shortest", "-vf", f"{SCALE},{sub}", str(out)], cfg)
+                "-map", "0:v", "-map", "1:a:0", "-shortest",
+                # JPEG kareler tam renk aralığında (yuvj420p): standart yuv420p (tv aralığı) çıktıya çevir
+                "-vf", f"{SCALE}:in_range=pc:out_range=tv,{sub}", "-color_range", "tv", str(out)], cfg)
         if not cfg["upscale"]["keep_frames"]:
             shutil.rmtree(fdir, ignore_errors=True)
         return time.time() - t
