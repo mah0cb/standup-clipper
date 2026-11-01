@@ -72,16 +72,19 @@ def render_bit(video, bit, box, ass_rel, out, layout, mode, cfg):
     if should_upscale(mode, layout, box["h"]):
         fdir = work_dir(video) / "frames" / str(bit["n"])
         t = time.time()
-        frames = upscale_frames(video, bit, box, fdir, cfg)
-        log.info("Bit #%d Real-ESRGAN: %d kare, %.1f sn", bit["n"], len(list(frames.glob("*.jpg"))), time.time() - t)
-        # Büyütülmüş kareler (orijinal fps) + orijinal ses; altyazı en son
-        ffmpeg(["-framerate", video_info(video)["fps"], "-i", str(frames / "%06d.jpg"),
-                "-ss", f"{bit['start']:.3f}", "-to", f"{bit['end']:.3f}", "-i", str(video),
-                "-map", "0:v", "-map", "1:a:0", "-shortest",
-                # JPEG kareler tam renk aralığında (yuvj420p): standart yuv420p (tv aralığı) çıktıya çevir
-                "-vf", f"{SCALE}:in_range=pc:out_range=tv,{sub}", "-color_range", "tv", str(out)], cfg)
-        if not cfg["upscale"]["keep_frames"]:
-            shutil.rmtree(fdir, ignore_errors=True)
+        try:
+            frames = upscale_frames(video, bit, box, fdir, cfg)
+            log.info("Bit #%d Real-ESRGAN: %d kare, %.1f sn", bit["n"], len(list(frames.glob("*.jpg"))), time.time() - t)
+            # Büyütülmüş kareler (orijinal fps) + orijinal ses; altyazı en son.
+            # JPEG kareler tam renk aralığında (yuvj420p): standart yuv420p (tv aralığı) çıktıya çevrilir.
+            ffmpeg(["-framerate", video_info(video)["fps"], "-i", str(frames / "%06d.jpg"),
+                    "-ss", f"{bit['start']:.3f}", "-to", f"{bit['end']:.3f}", "-i", str(video),
+                    "-map", "0:v", "-map", "1:a:0", "-shortest",
+                    "-vf", f"scale=1080:1920:flags=lanczos:in_range=pc:out_range=tv,setsar=1,{sub}",
+                    "-color_range", "tv", str(out)], cfg)
+        finally:
+            if not cfg["upscale"]["keep_frames"]:
+                shutil.rmtree(fdir, ignore_errors=True)
         return time.time() - t
     ffmpeg(["-ss", f"{bit['start']:.3f}", "-to", f"{bit['end']:.3f}", "-i", str(video),
             "-vf", f"{layout_filter(layout, box)},{sub}", str(out)], cfg)
