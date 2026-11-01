@@ -22,6 +22,11 @@ yeniden transkribe) → translate (Claude, sistem prompt'unda çeviri kuralları
 proofread (Claude, `translations_checked.json`) → subtitles (ASS) → reframe (PySceneDetect çekimleri + MediaPipe
 yüz → çekim başına crop x) → [review: onay sayfası] → render (crop|blur_bg, isteğe bağlı Real-ESRGAN, altyazı en son).
 
+## Web arayüzü
+`clipper/web.py` (FastAPI, yalnız 127.0.0.1:8770) + `clipper/web.html` (vanilla JS SPA) + `clipper/jobs.py`
+(tek işçili kuyruk, `work/_jobs.json`, loglar `work/_jobs/{id}.log`, SSE ile canlı). `Baslat.bat` başlatır.
+Pipeline'ı `clipper/pipeline.py` üzerinden CLI ile aynı fonksiyonlarla çağırır. Paylaşım takibi `work/_shares.json`.
+
 ## CLI
 ```
 python main.py run <video> --comedian "Ad" [--no-review]

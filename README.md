@@ -43,11 +43,17 @@ Real-ESRGAN (kalite yükseltme, isteğe bağlı). `realesr-general-x4v3` resmi n
 PyTorch ağırlığı bir kez ncnn'e dönüştürülür:
 
 ```powershell
-curl.exe -L -o $env:TEMPesr.zip https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip
-Expand-Archive $env:TEMPesr.zip modelsealesrgan
-curl.exe -L -o modelsealesr-general-x4v3.pth https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth
+curl.exe -L -o $env:TEMP
+esr.zip https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip
+Expand-Archive $env:TEMP
+esr.zip models
+ealesrgan
+curl.exe -L -o models
+ealesr-general-x4v3.pth https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth
 pip install pnnx
-python tools\convert_realesrgan.py modelsealesr-general-x4v3.pth modelsealesrgan\models
+python tools\convert_realesrgan.py models
+ealesr-general-x4v3.pth models
+ealesrgan\models
 ```
 
 Whisper modeli (~3 GB) ilk çalıştırmada otomatik indirilir.
@@ -55,7 +61,25 @@ Whisper modeli (~3 GB) ilk çalıştırmada otomatik indirilir.
 `api` modunu kullanacaksanız `.env.example` dosyasını `.env` olarak kopyalayıp `ANTHROPIC_API_KEY` girin
 ve `config.yaml` içinde `claude.mode: api` yapın.
 
-## Kullanım
+## Web arayüzü (önerilen)
+
+Masaüstündeki **Standup Clipper** kısayoluna ya da proje kökündeki `Baslat.bat`'a çift tıklayın; panel
+http://127.0.0.1:8770/ adresinde açılır (yalnızca bu bilgisayardan erişilebilir).
+
+- **Kütüphane:** `samples/` içindeki videolar, süre, çözünürlük ve durum. Sürükle-bırak ile video ekleme
+  (dosya adı otomatik `komedyen__gosteri.mp4`). 720p altı videolarda kırmızı uyarı.
+- **İşleme:** adım adım ilerleme, süreler ve canlı log. Hata olursa Türkçe özet ve "Kaldığı yerden devam et".
+  Claude limiti dolarsa "Claude limiti doldu" uyarısı ve isteğe bağlı otomatik yeniden deneme (30 dk arayla).
+- **Onay:** her klipte kaynak videodan o aralığı oynatan önizleme, altyazısız kelimeler kırmızı,
+  "Kaydet ve render et".
+- **Çıktılar:** klipler tarayıcıda oynatılır; açıklama + hashtag kopyalama, "Klasörde göster",
+  YouTube/Instagram/TikTok paylaşım takibi ve "henüz paylaşılmamış" filtresi.
+- **Ayarlar:** önemli `config.yaml` ayarları form olarak (yorumlar korunarak kaydedilir).
+
+İşler sırayla, tek tek çalışır; durum `work/_jobs.json`'da tutulur, sunucu kapanıp açılsa da kaybolmaz.
+Elle başlatma: `python -m clipper.web --open`.
+
+## Kullanım (komut satırı)
 
 ```powershell
 # 1–8. adımlar, sonunda tarayıcıda onay sayfası açılır
@@ -144,4 +168,10 @@ Tüm modeller, eşikler, klip uzunlukları, font, renkler ve Claude modu buradad
 
 ```powershell
 python -m pytest
+```
+
+Arayüz uçtan uca testi (gerçek pipeline, tarayıcıdan tıklayarak; ekran görüntüleri `work/screenshots/`):
+
+```powershell
+python tools\ui_e2e.py samples\ismo_test.mp4 ISMO "5 dk test"
 ```
