@@ -1,6 +1,8 @@
 """standup-clipper komut satırı.
 
   python main.py run video.mp4 --comedian "İsim"   → 1–8. adımlar + onay sayfası
+  python main.py run-all samples\                  → klasördeki tüm videolar (onay sayfası açmadan)
+  python main.py review video.mp4                   → onay sayfasını açar
   python main.py render video.mp4                   → onaylanan klipleri render eder
   python main.py step <adim> video.mp4              → tek adımı yeniden çalıştırır
 """
@@ -19,6 +21,7 @@ STEPS = {
     "select": select_llm, "gapfill": gapfill, "translate": translate, "proofread": proofread, "subtitles": subtitles, "reframe": reframe,
     "render": render, "review": review,
 }
+VIDEO_EXT = {".mp4", ".mkv", ".mov", ".m4v", ".webm"}
 RUN_STEPS = ["audio", "transcribe", "laughter", "candidates", "select", "gapfill", "translate", "proofread", "subtitles", "reframe"]
 
 
@@ -31,6 +34,24 @@ def timed(name, video, cfg, force=False, **kw):
     tm[name] = dt
     write_json(p, tm)
     logging.info("✔ %-11s %6.1f sn", name, dt)
+
+
+def comedian_from_filename(path):
+    """"zoltan_kaszas__london_fog.mp4" → "Zoltan Kaszas" (çift alt çizgiden önceki kısım)."""
+    name = Path(path).stem.split("__")[0].replace("_", " ").strip()
+    # Komedyenler çoğunlukla yabancı: standart büyük harf (i → I); dosya adında "İ" yazılıysa korunur
+    return " ".join(w[0].upper() + w[1:] for w in name.split())
+
+
+def process(video, cfg, comedian=""):
+    """1–8. adımlar (onay sayfası hariç)."""
+    meta_p = work_dir(video) / "meta.json"
+    meta = read_json(meta_p) if meta_p.exists() else {}
+    if comedian:
+        meta["comedian"] = comedian
+    write_json(meta_p, {**meta, "video": str(Path(video).resolve())})
+    for name in RUN_STEPS:
+        timed(name, video, cfg)
 
 
 def main():
@@ -49,26 +70,43 @@ def main():
     rd.add_argument("video")
     rd.add_argument("--layout", choices=["crop", "blur_bg"], help="Düzen (varsayılan: config render.layout)")
     rd.add_argument("--upscale", choices=["auto", "always", "off"], help="Real-ESRGAN (varsayılan: config upscale.mode)")
+    ra = sub.add_parser("run-all", help="Klasördeki tüm videoları sırayla işle (onay sayfası açmadan)")
+    ra.add_argument("folder")
+    sub.add_parser("review", help="Onay sayfasını aç").add_argument("video")
     s = sub.add_parser("step", help="Tek adımı yeniden çalıştır")
     s.add_argument("name", choices=list(STEPS))
     s.add_argument("video")
     a = ap.parse_args()
 
+    cfg = load_config()
+    if a.cmd == "run-all":
+        videos = sorted(p for p in Path(a.folder).iterdir() if p.suffix.lower() in VIDEO_EXT)
+        if not videos:
+            ap.error(f"Klasörde video yok: {a.folder}")
+        done, failed = [], []
+        for i, v in enumerate(videos, 1):
+            name = comedian_from_filename(v)
+            logging.info("=== [%d/%d] %s (komedyen: %s)", i, len(videos), v.name, name)
+            try:
+                process(v, cfg, name)
+                done.append(v)
+            except Exception:  # bir video bozuksa diğerleri yine işlensin
+                logging.exception("%s işlenemedi, sonrakine geçiliyor", v.name)
+                failed.append(v)
+        logging.info("Bitti: %d başarılı, %d hatalı. Onay için: python main.py review <video>", len(done), len(failed))
+        for v in done:
+            logging.info("  python main.py review %s", v)
+        return
+
     if not Path(a.video).exists():
         ap.error(f"Video bulunamadı: {a.video}")
-    cfg = load_config()
-    wd = work_dir(a.video)
 
     if a.cmd == "run":
-        meta_p = wd / "meta.json"
-        meta = read_json(meta_p) if meta_p.exists() else {}
-        if a.comedian:
-            meta["comedian"] = a.comedian
-        write_json(meta_p, {**meta, "video": str(Path(a.video).resolve())})
-        for name in RUN_STEPS:
-            timed(name, a.video, cfg)
+        process(a.video, cfg, a.comedian)
         if not a.no_review:
             review.run(a.video, cfg)
+    elif a.cmd == "review":
+        review.run(a.video, cfg)
     elif a.cmd == "render":
         timed("render", a.video, cfg, layout=a.layout, upscale=a.upscale)
     else:

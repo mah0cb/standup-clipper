@@ -19,6 +19,8 @@ def run(video, cfg, force=False):
     def make():
         _, words = transcribe.run(video, cfg)
         bits = select_llm.run(video, cfg)
+        if not bits:
+            return {}
         g, wcfg = cfg["gapfill"], cfg["whisper"]
         from faster_whisper import WhisperModel, decode_audio
 

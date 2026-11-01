@@ -85,3 +85,10 @@ def test_candidates_never_start_mid_sentence():
     laughs = [{"start": t, "end": t + 2, "prob": 0.7} for t in (50.0, 120.0, 180.0)]
     for cd in candidates.build(laughs, words, CFG):
         assert cd["start"] in starts
+
+
+def test_comedian_from_filename():
+    import main
+    assert main.comedian_from_filename("samples/zoltan_kaszas__london_fog.mp4") == "Zoltan Kaszas"
+    assert main.comedian_from_filename("İlker_ayrık__gosteri.mkv") == "İlker Ayrık"
+    assert main.comedian_from_filename("ismo.mp4") == "Ismo"
