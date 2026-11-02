@@ -147,6 +147,7 @@ def read_settings():
 def write_settings(values):
     """config.yaml'ı yorumları koruyarak günceller (ruamel round-trip)."""
     from ruamel.yaml import YAML
+    from ruamel.yaml.scalarstring import DoubleQuotedScalarString
 
     yaml = YAML()
     yaml.preserve_quotes = True
@@ -158,6 +159,7 @@ def write_settings(values):
         if isinstance(kind, list):
             if v not in kind:
                 raise HTTPException(400, f"{path}: {kind} değerlerinden biri olmalı")
+            v = DoubleQuotedScalarString(v)  # çıplak off, PyYAML'da False okunur
         else:
             try:
                 v = kind(v)

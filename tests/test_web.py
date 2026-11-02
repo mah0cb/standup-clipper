@@ -163,10 +163,11 @@ def test_outputs_and_share_tracking(env):
 def test_settings_roundtrip_keeps_comments(env):
     s = env.client.get("/api/settings").json()
     assert s["values"]["render.layout"] == "crop" and s["fields"]["upscale.mode"] == ["auto", "always", "off"]
+    r = env.client.post("/api/settings", json={"upscale.mode": "auto"})
     r = env.client.post("/api/settings", json={"upscale.mode": "off", "laughter.threshold": "0.35", "select.max_bits": "8"})
-    assert r.status_code == 200 and r.json()["laughter.threshold"] == 0.35 and r.json()["select.max_bits"] == 8
+    assert r.status_code == 200 and r.json()["upscale.mode"] == "off" and r.json()["laughter.threshold"] == 0.35 and r.json()["select.max_bits"] == 8
     text = (env.root / "config.yaml").read_text(encoding="utf-8")
-    assert "# auto (kırpılan alan 1920'den kısaysa)" in text and "mode: off" in text  # yorumlar korundu
+    assert "auto (kırpılan alan 1920'den kısaysa)" in text and 'mode: "off"' in text  # yorumlar korundu
     assert env.client.post("/api/settings", json={"render.layout": "kare"}).status_code == 400
     assert env.client.post("/api/settings", json={"subs.size": "büyük"}).status_code == 400
     assert env.client.post("/api/settings", json={"bilinmeyen.alan": 1}).status_code == 400

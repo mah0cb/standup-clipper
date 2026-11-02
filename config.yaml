@@ -76,7 +76,7 @@ render:
   audio_filter: loudnorm=I=-14:TP=-1.5:LRA=11
 
 upscale:                    # Real-ESRGAN (ncnn-vulkan), yalnız onaylanan klipler, yalnız crop düzeni
-  mode: auto                # auto (kırpılan alan 1920'den kısaysa) | always | off
+  mode: "off"               # off (telefonda fark görünmedi) | auto (kırpılan alan 1920'den kısaysa) | always
   model: realesr-general-x4v3
   tile: 0                   # 0 = otomatik; VRAM yetmezse 256/128 deneyin
   keep_frames: false        # work/{video}/frames/{n}/ altındaki ara kareleri sakla

@@ -112,7 +112,7 @@ Adım adları: `audio, transcribe, laughter, candidates, select, gapfill, transl
 
 ### Kalite yükseltme (Real-ESRGAN)
 
-`upscale.mode: auto` iken kırpılan alan 1920 pikselden kısaysa (ör. 1080p kaynakta 1012 px) onaylanan
+Varsayılan olarak kapalı (`upscale.mode: "off"`; telefon ekranında fark görünmedi). `auto` iken kırpılan alan 1920 pikselden kısaysa (ör. 1080p kaynakta 1012 px) onaylanan
 klipler `realesr-general-x4v3` ile büyütülür; tam gösteri asla işlenmez. Kareler `work/{video}/frames/{n}/`
 altına çıkarılır, işlem bitince silinir (`upscale.keep_frames`). RTX 4060'ta ~7.9 kare/sn
 (85 sn'lik klip: büyütme ~4.3 dk, toplam ~5.3 dk). blur_bg düzeninde video zaten küçültüldüğü için büyütme yapılmaz.

@@ -47,6 +47,9 @@ python main.py step <adim> <video>       # tek adımı zorla yeniden çalıştı
 - jrgillick orijinal scripti modern sürümlerde çalışmıyor; yalnız model tanımı + checkpoint kullanılıyor.
 - torch CUDA 13.2 derlemesi (2.15 için cu128 yok). Whisper (ctranslate2) pip'ten gelen cuBLAS/cuDNN 12 DLL'lerini kullanır.
 - Yüz: önce short range, bulamazsa full range; karenin alt %40'ı seyirci sayılır.
+- Varsayılan: `render.layout: crop`, `upscale.mode: "off"` (telefonda fark görünmedi; ayarlardan açılabilir).
+  YAML'da `off` tırnaklı olmalı (çıplak `off` PyYAML'da False); web ayar yazımı seçenekleri tırnaklı yazar.
+- Seçim: 30-60 sn'lik bitler tercih edilir; 60 sn yalnız kurulum gerektiriyorsa aşılır, en fazla `candidates.max_len`.
 - Upscale yalnız crop düzeninde ve yalnız onaylı kliplerde; JPEG kareler tam aralıktan tv aralığına çevrilir.
 - Komedyen adı dosya adından standart büyük harfle (yabancı isimler: "ismo" → "Ismo").
 

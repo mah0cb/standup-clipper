@@ -21,7 +21,7 @@ Seçim kuralları:
 - Klip asla cümle ortasından başlamaz/bitmez: start_word yalnızca satır başındaki ilk indeks (#BAŞ-SON'daki BAŞ),
   end_word yalnızca satır sonundaki indeks (SON) olabilir.
 - Punchline'dan sonraki kahkaha klipte kalsın: end_word punchline cümlesinin SON'u olsun (kahkaha kod tarafından eklenir).
-- Klip uzunluğu {min_len}-{max_len} sn.
+- Klip uzunluğu {min_len}-{max_len} sn. 30-60 saniyelik bitleri tercih et; 60 saniyeyi ancak kurulum (set-up) gerektiriyorsa aş, en fazla {max_len}.
 - Türk izleyiciye geçmeli; Amerikan siyaseti veya çevrilemez kelime oyunu üzerine kurulu olmamalı.
 - Sadece alkış, teşekkür, selamlama, gösteriye giriş/çıkış, şarkı veya seyirciyle boş muhabbet olan bölümleri ASLA seçme.
 - Seçilen klipler birbiriyle çakışmamalı.
