@@ -5,6 +5,7 @@
 import argparse
 import asyncio
 import json
+import logging
 import shutil
 import subprocess
 import webbrowser
@@ -12,8 +13,8 @@ from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from . import review as review_mod
@@ -27,6 +28,8 @@ WORK = ROOT / "work"
 SHARES = WORK / "_shares.json"
 CONFIG = ROOT / "config.yaml"
 PLATFORMS = ("youtube", "instagram", "tiktok")
+MAX_UPLOAD = 3 * 1024 ** 3
+log = logging.getLogger("web")
 
 # Ayarlar sayfasındaki alanlar: yol → tür/seçenekler
 SETTINGS = {
@@ -151,6 +154,7 @@ def write_settings(values):
 
     yaml = YAML()
     yaml.preserve_quotes = True
+    yaml.width = 4096  # uzun satırlar (ör. initial_prompt) kırılmasın
     data = yaml.load(CONFIG.read_text(encoding="utf-8"))
     for path, v in values.items():
         if path not in SETTINGS:
@@ -226,19 +230,57 @@ def create_app(queue=None, start_worker=True, open_url=None):
     def videos():
         return library(queue)
 
-    @app.post("/api/videos/upload")
-    def upload(file: UploadFile = File(...), comedian: str = Form(...), show: str = Form(...)):
-        name = upload_name(comedian, show, Path(file.filename or "").suffix)
+    @app.exception_handler(Exception)
+    async def crash(request, e):
+        """Beklenmeyen hata sunucuyu düşürmez: loglanır, arayüze Türkçe mesaj döner."""
+        log.exception("İstek hatası: %s %s", request.method, request.url.path)
+        return JSONResponse({"detail": f"Sunucu hatası: {e}"}, 500)
+
+    @app.put("/api/videos/upload")
+    async def upload(request: Request, comedian: str, show: str, ext: str, offset: int, total: int):
+        """Parça parça yükleme: parçalar sırayla .part dosyasına eklenir, son parçada yerine taşınır."""
+        name = upload_name(comedian, show, ext)
+        if not 0 < total <= MAX_UPLOAD:
+            raise HTTPException(413, "Dosya boş ya da 3 GB'tan büyük")
         dst = SAMPLES / name
+        tmp = dst.with_suffix(dst.suffix + ".part")
         if dst.exists():
             raise HTTPException(409, f"{name} zaten var")
-        SAMPLES.mkdir(exist_ok=True)
-        tmp = dst.with_suffix(dst.suffix + ".part")
-        with open(tmp, "wb") as f:
-            shutil.copyfileobj(file.file, f, 4 * 1024 * 1024)
+        data = await request.body()
+        if offset == 0:
+            SAMPLES.mkdir(exist_ok=True)
+            tmp.write_bytes(b"")
+        elif not tmp.exists() or tmp.stat().st_size != offset:
+            raise HTTPException(409, "Yükleme sırası bozuldu, baştan deneyin")
+        with open(tmp, "ab") as f:
+            f.write(data)
+        size = offset + len(data)
+        if size > total:
+            tmp.unlink()
+            raise HTTPException(400, "Dosya beklenenden büyük geldi")
+        if size < total:
+            return {"received": size}
         tmp.replace(dst)
         save_meta(dst, comedian.strip())  # yazıldığı gibi (ör. "ISMO"), dosya adından türetilmez
+        log.info("Video eklendi: %s (%d MB)", name, total >> 20)
         return {"name": name}
+
+    @app.delete("/api/videos/{name}")
+    def delete_video(name: str):
+        """samples/ içindeki video ve work/ ara dosyaları silinir; out/ içindeki klipler korunur."""
+        p = sample_path(name)
+        job = queue.latest_for(name)
+        if job and job["status"] in ("queued", "running"):
+            raise HTTPException(409, "Video işlenirken silinemez")
+        try:
+            p.unlink()
+            wd = WORK / slug(p.stem)  # work_dir() klasörü yeniden oluşturur, burada kullanılmaz
+            if wd.exists():
+                shutil.rmtree(wd)
+        except PermissionError:
+            raise HTTPException(409, "Dosya kullanımda (oynatıcıyı kapatıp tekrar deneyin)")
+        log.info("Video silindi: %s", name)
+        return {"ok": True}
 
     @app.get("/api/videos/{name}/file")
     def video_file(name: str):
@@ -259,7 +301,8 @@ def create_app(queue=None, start_worker=True, open_url=None):
         wd = work_dir(sample_path(name))
         if not (wd / review_mod.TR_FILE).exists():
             raise HTTPException(409, "Bu video henüz işlenmedi")
-        return {**review_mod.load(wd), "max_chars": load_config()["subs"]["max_chars"]}
+        subs = load_config()["subs"]
+        return {**review_mod.load(wd), "max_chars": subs["max_chars"], "note_secs": subs["note_secs"]}
 
     @app.post("/api/videos/{name}/review")
     def review_save(name: str, body: ReviewBody):
@@ -358,17 +401,24 @@ def create_app(queue=None, start_worker=True, open_url=None):
 
 
 def main():
-    import logging
-
     import uvicorn
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8770)
     ap.add_argument("--open", action="store_true", help="Tarayıcıda aç")
     a = ap.parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
+    WORK.mkdir(exist_ok=True)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S",
+                        handlers=[logging.StreamHandler(), logging.FileHandler(WORK / "server.log", encoding="utf-8")])
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    # Windows: tarayıcı video bağlantısını kesince asyncio zararsız ConnectionResetError basar; loga yazılmaz
+    logging.getLogger("asyncio").addFilter(lambda r: not (r.exc_info and isinstance(r.exc_info[1], ConnectionResetError)))
     app = create_app(open_url=f"http://127.0.0.1:{a.port}/" if a.open else None)
-    uvicorn.run(app, host="127.0.0.1", port=a.port, log_level="warning")  # yalnızca yerel
+    try:
+        uvicorn.run(app, host="127.0.0.1", port=a.port, log_config=None)  # yalnızca yerel
+    except BaseException:
+        logging.exception("Sunucu durdu")
+        raise
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ Türkçe karaoke altyazılı 1080x1920 dikey klipler üretir. Windows, Python 3.
 ## Kurallar
 - Komutları her zaman `.venv\Scripts\python` ile çalıştır. Kod yorumları ve README Türkçe.
 - Tüm ayarlar `config.yaml`'da. Ara çıktılar `work/{video}/*.json` (cache: dosya varsa adım atlanır).
-- `samples/` ve `out/` içindeki dosyaları asla silme. Değişiklikten sonra `python -m pytest`.
+- `samples/` ve `out/` içindeki dosyaları asla silme (istisna: kullanıcının panelden "Sil" ile sildiği video). Değişiklikten sonra `python -m pytest`.
 
 ## Klasörler
 - `main.py` — CLI. `clipper/` — adım modülleri (her biri `run(video, cfg, force)`), `review.html` onay sayfası.
@@ -26,6 +26,12 @@ yüz → çekim başına crop x) → [review: onay sayfası] → render (crop|bl
 `clipper/web.py` (FastAPI, yalnız 127.0.0.1:8770) + `clipper/web.html` (vanilla JS SPA) + `clipper/jobs.py`
 (tek işçili kuyruk, `work/_jobs.json`, loglar `work/_jobs/{id}.log`, SSE ile canlı). `Baslat.bat` başlatır.
 Pipeline'ı `clipper/pipeline.py` üzerinden CLI ile aynı fonksiyonlarla çağırır. Paylaşım takibi `work/_shares.json`.
+Sunucu logu `work/server.log` (beklenmeyen istek hataları yakalanır, arayüze Türkçe 500 döner).
+- SPA: her sekme `route()`'un açtığı yeni kaba (`view`) çizer; async sayfalar kabı en başta yakalar, zamanlayıcılar
+  `every(kap, ...)` ile kap DOM'dan çıkınca durur. Global `app`'e geç yazmak sekme hatasına yol açmıştı.
+- Yükleme: `PUT /api/videos/upload?...&offset&total`, 8 MB'lık sıralı parçalar `.part`'a eklenir, en fazla 3 GB.
+- Silme: `DELETE /api/videos/{ad}` samples/ + work/ siler, out/ korunur; iş sıradaysa/çalışıyorsa 409.
+- Onay önizlemesi: altyazı ve notlar istemcide anlık WebVTT (Blob) olarak `<track>`'a bağlanır, düzenleyince yenilenir.
 
 ## CLI
 ```

@@ -47,6 +47,10 @@
   .err { border:1px solid var(--bad); background:#ef444418; border-radius:8px; padding:10px; margin:10px 0; }
   label { cursor:pointer; }
   a { color:var(--acc); }
+  progress { width:220px; accent-color:var(--acc); }
+  button.del { background:#7f1d1d; }
+  video::cue { font:600 18px system-ui; background:#000c; }
+  video::cue(.note) { color:#facc15; }
   @media (max-width:760px) { .rev { grid-template-columns:1fr; } .hide-sm { display:none; } }
 </style>
 </head>
@@ -66,8 +70,11 @@ const STEPS = ["audio", "transcribe", "laughter", "candidates", "select", "gapfi
 const STEP_TR = { audio: "Ses", transcribe: "Transkript", laughter: "Kahkaha", candidates: "Adaylar", select: "Seçim (Claude)",
   gapfill: "Kaçan konuşma", translate: "Çeviri (Claude)", proofread: "Çeviri kontrolü", subtitles: "Altyazı", reframe: "Kadraj", render: "Render" };
 const STATUS_TR = { queued: "sırada", running: "işleniyor", done: "tamamlandı", error: "hata", limit: "Claude limiti" };
-const app = document.getElementById("app");
-let timer = null, es = null;
+const main = document.getElementById("app");
+// Her sekme kendi kabına (view) çizer. Sekme değişince eski kap DOM'dan çıkar: geç biten async çizimler
+// oraya düşer (yeni sekmeyi bozmaz), every() zamanlayıcıları kap bağlı değilse kendini durdurur.
+let view = null, es = null;
+const every = (v, fn, ms) => { const t = setInterval(() => v.isConnected ? fn() : clearInterval(t), ms); };
 
 const $ = (t, a = {}, ...kids) => { const e = document.createElement(t); for (const [k, v] of Object.entries(a)) { if (k === "dataset") Object.assign(e.dataset, v); else e[k] = v; } e.append(...kids.filter(k => k != null)); return e; };
 const fmt = s => s == null ? "–" : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -81,40 +88,62 @@ async function api(url, opts = {}) {
 const badge = s => $("span", { className: "badge s-" + s.split(" ")[0], textContent: s });
 
 function route() {
-  clearInterval(timer); if (es) { es.close(); es = null; }
+  if (es) { es.close(); es = null; }
+  if (view) view.querySelectorAll("video").forEach(v => { v.pause(); v.removeAttribute("src"); v.load(); });  // açık video bağlantılarını bırak
   const [, page = "library", arg] = location.hash.split("/");
   document.querySelectorAll("nav a").forEach(a => a.classList.toggle("on", a.dataset.p === (page === "job" ? "jobs" : page)));
-  app.replaceChildren();
+  view = $("div"); main.replaceChildren(view);
   ({ library, jobs, job: jobPage, review: reviewPage, outputs: outputsPage, settings: settingsPage }[page] || library)(arg && decodeURIComponent(arg));
 }
 window.addEventListener("hashchange", route);
+// Açık sekmenin linkine tıklamak hashchange üretmez; yine de veriyi yeniden çek
+document.querySelector("nav").addEventListener("click", e => { if (e.target.closest("a")?.hash === location.hash) route(); });
+
+const CHUNK = 8 << 20;
+async function uploadFile(f, comedian, show, onProgress) {
+  const q = `comedian=${enc(comedian)}&show=${enc(show)}&ext=${enc((f.name.match(/\.[^.]+$/) || [""])[0])}&total=${f.size}`;
+  let j = {};
+  for (let off = 0; off < f.size; off += CHUNK) {
+    let r;
+    try { r = await fetch(`/api/videos/upload?${q}&offset=${off}`, { method: "PUT", body: f.slice(off, off + CHUNK) }); }
+    catch { throw new Error("Sunucuya bağlanılamadı. Panel açık mı?"); }
+    j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || `Sunucu hatası (${r.status})`);
+    onProgress(Math.min(off + CHUNK, f.size) / f.size);
+  }
+  return j;
+}
 
 /* ---------- Kütüphane ---------- */
 function library() {
+  const app = view;
   const comedian = $("input", { id: "comedian", placeholder: "Komedyen (ör. Zoltan Kaszas)" });
   const show = $("input", { id: "show", placeholder: "Gösteri (ör. London Fog)" });
   const file = $("input", { id: "file", type: "file", accept: "video/*", hidden: true });
   const msg = $("span", { id: "upmsg", className: "mut" });
+  const bar = $("progress", { id: "upbar", max: 1, value: 0, hidden: true });
   const drop = $("div", { id: "drop" }, $("div", { textContent: "Videoyu buraya sürükleyin ya da " }, $("a", { href: "#", textContent: "seçin", onclick: e => { e.preventDefault(); file.click(); } })), file);
   let picked = null;
   const pick = f => { picked = f; msg.textContent = `Seçildi: ${f.name} (${(f.size / 1e6).toFixed(0)} MB)`; };
-  file.onchange = () => file.files[0] && pick(file.files[0]);
+  file.onchange = () => { if (file.files[0]) pick(file.files[0]); file.value = ""; };  // aynı dosya yeniden seçilebilsin
   drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
   drop.ondragleave = () => drop.classList.remove("over");
   drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) pick(e.dataTransfer.files[0]); };
-  const up = $("button", { id: "upload", textContent: "Ekle", onclick: () => {
+  const up = $("button", { id: "upload", textContent: "Ekle", onclick: async () => {
     if (!picked || !comedian.value.trim() || !show.value.trim()) { msg.textContent = "Video, komedyen ve gösteri adı gerekli."; return; }
-    const fd = new FormData(); fd.append("file", picked); fd.append("comedian", comedian.value); fd.append("show", show.value);
-    const x = new XMLHttpRequest(); x.open("POST", "/api/videos/upload");
-    x.upload.onprogress = e => msg.textContent = `Yükleniyor… %${Math.round(100 * e.loaded / e.total)}`;
-    x.onload = () => { const j = JSON.parse(x.responseText || "{}"); msg.textContent = x.status === 200 ? `Eklendi: ${j.name}` : "Hata: " + (j.detail || x.status); if (x.status === 200) { picked = null; load(); } };
-    x.send(fd);
+    if (picked.size > 3 * 1024 ** 3) { msg.textContent = "Dosya 3 GB'tan büyük olamaz."; return; }
+    up.disabled = true; bar.hidden = false; bar.value = 0;
+    try {
+      const j = await uploadFile(picked, comedian.value, show.value, f => { bar.value = f; msg.textContent = `Yükleniyor… %${Math.round(100 * f)}`; });
+      msg.textContent = `Eklendi: ${j.name}`; picked = null; load();
+    } catch (e) { msg.textContent = "Hata: " + e.message; }
+    up.disabled = false; bar.hidden = true;
   } });
   const tbody = $("tbody");
-  app.append($("div", { className: "card" }, drop, $("div", { className: "row", style: "margin-top:10px" }, comedian, show, up, msg),
+  app.append($("div", { className: "card" }, drop, $("div", { className: "row", style: "margin-top:10px" }, comedian, show, up, bar, msg),
     $("div", { className: "mut", textContent: 'Dosya adı otomatik "komedyen__gosteri.mp4" olur.' })),
     $("div", { className: "card" }, $("table", {}, $("thead", {}, $("tr", {}, ...["Video", "Komedyen", "Gösteri", "Süre", "Çözünürlük", "Durum", ""].map(h => $("th", { textContent: h })))), tbody)));
-  async function load() {
+  async function loadList() {
     const vids = await api("/api/videos");
     tbody.replaceChildren(...vids.map(v => {
       const res = v.width ? `${v.width}×${v.height}` : "–";
@@ -124,6 +153,10 @@ function library() {
       const ren = $("button", { className: "render sec", textContent: "Render", disabled: !["onay bekliyor", "render edildi"].includes(v.status),
         onclick: async () => { const j = await api(`/api/videos/${enc(v.name)}/render`, { method: "POST", body: {} }); location.hash = "#/job/" + j.id; } });
       const outs = $("button", { className: "outs sec", textContent: `Çıktılar (${v.outputs})`, disabled: !v.outputs, onclick: () => location.hash = "#/outputs/" + enc(v.name.replace(/\.[^.]+$/, "")) });
+      const del = $("button", { className: "del", textContent: "Sil", disabled: ["sırada", "işleniyor"].includes(v.status), onclick: async () => {
+        if (!confirm(`${v.name}\n\nVideo ve tüm ara dosyaları silinsin mi? Render edilmiş klipler korunacak.`)) return;
+        try { await api(`/api/videos/${enc(v.name)}`, { method: "DELETE" }); load(); } catch (e) { msg.textContent = "Silinemedi: " + e.message; }
+      } });
       const st = $("td", {}, badge(v.status));
       if (v.job && ["queued", "running", "error", "limit"].includes(v.job.status)) st.append(" ", $("a", { href: "#/job/" + v.job.id, textContent: "ayrıntı", className: "mut" }));
       if (v.bits != null) st.append($("div", { className: "mut", textContent: `${v.bits} bit` }));
@@ -131,24 +164,27 @@ function library() {
         $("td", { textContent: v.name }), $("td", { textContent: v.comedian }), $("td", { textContent: v.show || "–" }),
         $("td", { textContent: fmt(v.duration) }),
         $("td", {}, res, v.low_res ? $("div", { className: "bad", textContent: "Düşük çözünürlük (<720p)" }) : null),
-        st, $("td", {}, $("div", { className: "row" }, start, rev, ren, outs)));
+        st, $("td", {}, $("div", { className: "row" }, start, rev, ren, outs, del)));
     }));
   }
-  load(); timer = setInterval(load, 3000);
+  const load = () => loadList().catch(e => msg.textContent = "Liste alınamadı: " + e.message);
+  load(); every(app, load, 3000);
 }
 
 /* ---------- İşleme ---------- */
 async function jobs() {
+  const app = view;
   const list = await api("/api/jobs");
   app.append($("div", { className: "card" }, $("h2", { textContent: "İşler", style: "margin-top:0;font-size:17px" }),
     list.length ? $("table", {}, $("tbody", {}, ...list.map(j => $("tr", {},
       $("td", {}, $("a", { href: "#/job/" + j.id, textContent: j.video, style: "color:var(--fg)" })),
       $("td", { textContent: j.kind === "render" ? "render" : "işleme" }),
       $("td", {}, badge(STATUS_TR[j.status])), $("td", { className: "mut", textContent: j.created.replace("T", " ") }))))) : $("div", { className: "mut", textContent: "Henüz iş yok." })));
-  timer = setInterval(() => { if (location.hash.startsWith("#/jobs")) route(); }, 5000);
+  every(app, route, 5000);
 }
 
 function jobPage(id) {
+  const app = view;
   const head = $("div", { className: "row" }), steps = $("div", { className: "steps" }), errBox = $("div"), log = $("pre", { id: "log" });
   app.append($("div", { className: "card" }, head, steps, errBox), $("div", { className: "card" }, $("div", { className: "mut", textContent: "Canlı log" }), log));
   let job = null;
@@ -173,6 +209,7 @@ function jobPage(id) {
     }
   }
   api(`/api/jobs/${id}`).then(j => {
+    if (!app.isConnected) return;  // bu arada sekme değişti
     draw(j);
     es = new EventSource(`/api/jobs/${id}/stream`);
     es.addEventListener("log", e => { log.textContent += JSON.parse(e.data) + "\n"; log.scrollTop = log.scrollHeight; });
@@ -183,6 +220,7 @@ function jobPage(id) {
 
 /* ---------- Onay ---------- */
 async function reviewPage(name) {
+  const app = view;
   let d;
   try { d = await api(`/api/videos/${enc(name)}/review`); } catch (e) { app.append($("div", { className: "err", textContent: e.message })); return; }
   const check = ta => { const ls = ta.value.split("\n").filter(l => l.trim()); ta.classList.toggle("badline", ls.length > 2 || ls.some(l => l.length > d.max_chars)); };
@@ -204,11 +242,27 @@ async function reviewPage(name) {
     $("button", { id: "save", className: "sec", textContent: "Kaydet", onclick: () => save(false) }),
     $("button", { id: "save-render", textContent: "Kaydet ve render et", onclick: () => save(true) }), msg));
   const src = `/api/videos/${enc(name)}/file`;
+  // Önizleme altyazısı: klibin Türkçe satırlarından anlık WebVTT (zamanlar kaynak videoya göre, subtitles.py ile aynı mantık)
+  const ts = s => new Date(Math.max(0, s) * 1000).toISOString().slice(11, 23);
+  const esc = t => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/-->/g, "->");
+  const vtt = (b, tr, texts) => "WEBVTT\n\n" + [
+    ...tr.groups.map((g, i) => [g.start, Math.min(tr.groups[i + 1]?.start ?? b.end, g.end + 1, b.end), texts[i]])
+      .filter(([s, e, t]) => e > s && t.trim())
+      .map(([s, e, t]) => `${ts(s)} --> ${ts(e)}\n${esc(t.split("\n").filter(l => l.trim()).join("\n"))}`),
+    ...(tr.notes || []).map(nt => `${ts(nt.start)} --> ${ts(Math.min(nt.start + d.note_secs, b.end))} line:0\n<c.note>${esc(nt.text)}</c>`),
+  ].join("\n\n") + "\n";
   for (const b of d.bits) {
     const tr = d.translations[b.n] || { groups: [], notes: [], replacements: [], changes: [] };
     const ok = $("input", { type: "checkbox", className: "ok", checked: d.approved.includes(b.n) });
     const vid = $("video", { className: "prev", preload: "none", controls: true, src });
     vid.ontimeupdate = () => { if (vid.dataset.stop && vid.currentTime >= +vid.dataset.stop) { vid.pause(); delete vid.dataset.stop; } };
+    const tas = [];
+    const setTrack = () => {
+      const old = vid.querySelector("track"); if (old) { URL.revokeObjectURL(old.src); old.remove(); }
+      const t = $("track", { kind: "subtitles", srclang: "tr", label: "Türkçe", default: true,
+        src: URL.createObjectURL(new Blob([vtt(b, tr, tas.map(ta => ta.value))], { type: "text/vtt" })) });
+      vid.append(t); t.track.mode = "showing";
+    };
     const play = $("button", { className: "sec play", textContent: "▶ Aralığı oynat", onclick: () => { vid.currentTime = b.start; vid.dataset.stop = b.end; vid.play(); } });
     const left = $("div", {},
       $("div", { className: "row" }, $("label", {}, ok, ` Render et #${b.n}`), $("strong", { style: "color:var(--acc)", textContent: `${b.score}/10` }),
@@ -221,17 +275,18 @@ async function reviewPage(name) {
       ...tr.changes.map(c => $("div", { className: "mut", textContent: `[${c.type}] ${c.before} → ${c.after}` }))));
     for (const g of tr.groups) {
       const ta = $("textarea", { className: "line", rows: 2, value: g.lines.join("\n") });
-      ta.oninput = () => check(ta); check(ta);
+      ta.oninput = () => { check(ta); setTrack(); }; check(ta); tas.push(ta);
       left.append($("div", { className: "grp" }, $("span", { className: "mut", textContent: fmt(g.start) }), ta, $("div", { className: "en", textContent: g.en })));
     }
     const card = $("section", { className: "card bit rev" + ((tr.uncovered || []).length ? " warn" : ""), dataset: { n: b.n } }, left, $("div", {}, vid, play));
-    const sync = () => card.classList.toggle("off", !ok.checked); ok.onchange = sync; sync();
+    const sync = () => card.classList.toggle("off", !ok.checked); ok.onchange = sync; sync(); setTrack();
     app.append(card);
   }
 }
 
 /* ---------- Çıktılar ---------- */
 async function outputsPage(filter) {
+  const app = view;
   const items = await api("/api/outputs");
   const only = $("input", { type: "checkbox", id: "unshared" });
   const grid = $("div", { className: "grid" });
@@ -260,6 +315,7 @@ async function outputsPage(filter) {
 
 /* ---------- Ayarlar ---------- */
 async function settingsPage() {
+  const app = view;
   const { values, fields } = await api("/api/settings");
   const LABEL = { "render.layout": "Düzen", "upscale.mode": "Kalite yükseltme (Real-ESRGAN)", "laughter.threshold": "Kahkaha eşiği",
     "select.max_bits": "Hedef bit sayısı (üst sınır)", "candidates.max_len": "Maks. klip uzunluğu (sn)", "subs.size": "Altyazı boyutu",

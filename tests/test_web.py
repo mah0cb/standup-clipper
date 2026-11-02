@@ -45,16 +45,41 @@ def tiny_video(path, w=320, h=240):
                     "-pix_fmt", "yuv420p", str(path)], check=True)
 
 
-def test_upload_names_file_and_rejects_duplicates(env):
-    files = {"file": ("x.MP4", b"veri", "video/mp4")}
-    r = env.client.post("/api/videos/upload", files=files, data={"comedian": "Zoltan Kaszas", "show": "London Fog"})
+def upload(env, data, chunk=3, **kw):
+    q = {"comedian": "Zoltan Kaszas", "show": "London Fog", "ext": ".MP4", "total": len(data), **kw}
+    for off in range(0, len(data), chunk):
+        r = env.client.put("/api/videos/upload", params={**q, "offset": off}, content=data[off:off + chunk])
+        if r.status_code != 200:
+            return r
+    return r
+
+
+def test_chunked_upload_names_file_and_rejects_duplicates(env):
+    r = upload(env, b"video verisi")
     assert r.status_code == 200 and r.json()["name"] == "zoltan_kaszas__london_fog.mp4"
-    assert (env.root / "samples" / "zoltan_kaszas__london_fog.mp4").read_bytes() == b"veri"
+    assert (env.root / "samples" / "zoltan_kaszas__london_fog.mp4").read_bytes() == b"video verisi"
+    assert not (env.root / "samples" / "zoltan_kaszas__london_fog.mp4.part").exists()
     assert read_json(env.root / "work" / "zoltan_kaszas__london_fog" / "meta.json")["comedian"] == "Zoltan Kaszas"
-    r = env.client.post("/api/videos/upload", files=files, data={"comedian": "Zoltan Kaszas", "show": "London Fog"})
+    assert upload(env, b"veri").status_code == 409
+    assert upload(env, b"veri", comedian=" ").status_code == 400
+    assert upload(env, b"veri", show="b", total=web.MAX_UPLOAD + 1).status_code == 413
+    # sıra dışı parça reddedilir
+    r = env.client.put("/api/videos/upload", params={"comedian": "a", "show": "b", "ext": ".mp4", "total": 10, "offset": 5}, content=b"x")
     assert r.status_code == 409
-    r = env.client.post("/api/videos/upload", files=files, data={"comedian": " ", "show": "x"})
-    assert r.status_code == 400
+
+
+def test_delete_video_keeps_outputs(env):
+    tiny_video(env.root / "samples" / "a__b.mp4")
+    write_json(env.root / "work" / "a__b" / "selected.json", [])
+    (env.root / "out" / "a__b").mkdir()
+    (env.root / "out" / "a__b" / "1_x.mp4").write_bytes(b"klip")
+    job = env.queue.add("a__b.mp4", "process")
+    assert env.client.delete("/api/videos/a__b.mp4").status_code == 409  # sırada iken silinmez
+    env.queue._update(job["id"], status="done")
+    assert env.client.delete("/api/videos/a__b.mp4").status_code == 200
+    assert not (env.root / "samples" / "a__b.mp4").exists() and not (env.root / "work" / "a__b").exists()
+    assert (env.root / "out" / "a__b" / "1_x.mp4").exists()
+    assert env.client.delete("/api/videos/a__b.mp4").status_code == 404
 
 
 def test_library_lists_videos_with_info_and_low_res_warning(env):
@@ -168,6 +193,7 @@ def test_settings_roundtrip_keeps_comments(env):
     assert r.status_code == 200 and r.json()["upscale.mode"] == "off" and r.json()["laughter.threshold"] == 0.35 and r.json()["select.max_bits"] == 8
     text = (env.root / "config.yaml").read_text(encoding="utf-8")
     assert "auto (kırpılan alan 1920'den kısaysa)" in text and 'mode: "off"' in text  # yorumlar korundu
+    assert "It's great, right?\"" in text  # uzun satır kırılmadı
     assert env.client.post("/api/settings", json={"render.layout": "kare"}).status_code == 400
     assert env.client.post("/api/settings", json={"subs.size": "büyük"}).status_code == 400
     assert env.client.post("/api/settings", json={"bilinmeyen.alan": 1}).status_code == 400
