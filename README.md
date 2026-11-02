@@ -2,6 +2,16 @@
 
 Bilgisayardaki bir stand-up videosundan en komik bitleri **seyirci kahkahasına** bakarak bulur,
 Claude ile seçip Türkçeye çevirir ve **Türkçe karaoke altyazılı 9:16 dikey** kısa videolar üretir.
+Tamamen yerelde çalışır (Whisper + kahkaha modeli + ffmpeg); yalnızca seçim ve çeviri için Claude'a metin gönderilir.
+
+![Web paneli: kütüphane](docs/panel.png)
+
+> **Not:** Bu araç yalnızca yerel video dosyalarını işler. İşlediğiniz içerik için gerekli haklara sahip
+> olmak kullanıcının sorumluluğundadır.
+
+**Hızlı kurulum:** Python 3.11, PATH'te ffmpeg ve NVIDIA GPU (önerilir) gerekir. Aşağıdaki
+[Kurulum](#kurulum-adım-adım) adımlarıyla `.venv` oluşturup bağımlılıkları ve modelleri kurun, sonra
+`Baslat.bat`'a çift tıklayın; panel tarayıcıda açılır.
 
 ```
 video.mp4 → ses → transkript → kahkaha → adaylar → Claude seçimi → kaçan konuşmayı kurtarma
@@ -43,17 +53,11 @@ Real-ESRGAN (kalite yükseltme, isteğe bağlı). `realesr-general-x4v3` resmi n
 PyTorch ağırlığı bir kez ncnn'e dönüştürülür:
 
 ```powershell
-curl.exe -L -o $env:TEMP
-esr.zip https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip
-Expand-Archive $env:TEMP
-esr.zip models
-ealesrgan
-curl.exe -L -o models
-ealesr-general-x4v3.pth https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth
+curl.exe -L -o $env:TEMP\resrgan.zip https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip
+Expand-Archive $env:TEMP\resrgan.zip models\realesrgan
+curl.exe -L -o models\realesr-general-x4v3.pth https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth
 pip install pnnx
-python tools\convert_realesrgan.py models
-ealesr-general-x4v3.pth models
-ealesrgan\models
+python tools\convert_realesrgan.py models\realesr-general-x4v3.pth models\realesrgan\models
 ```
 
 Whisper modeli (~3 GB) ilk çalıştırmada otomatik indirilir.
@@ -63,7 +67,7 @@ ve `config.yaml` içinde `claude.mode: api` yapın.
 
 ## Web arayüzü (önerilen)
 
-Masaüstündeki **Standup Clipper** kısayoluna ya da proje kökündeki `Baslat.bat`'a çift tıklayın; panel
+Proje kökündeki `Baslat.bat`'a çift tıklayın; panel
 http://127.0.0.1:8770/ adresinde açılır (yalnızca bu bilgisayardan erişilebilir).
 
 - **Kütüphane:** `samples/` içindeki videolar, süre, çözünürlük ve durum. Sürükle-bırak ile video ekleme
@@ -95,7 +99,8 @@ python main.py render samples\gosteri.mp4 --layout crop --upscale always
 
 # Klasördeki tüm videoları sırayla işle (onay sayfası açılmaz; komedyen adı dosya adından:
 # "zoltan_kaszas__london_fog.mp4" → "Zoltan Kaszas"). Sonra istediğiniz videonun onay sayfasını açın:
-python main.py run-all samplespython main.py review samples\zoltan_kaszas__london_fog.mp4
+python main.py run-all samples
+python main.py review samples\zoltan_kaszas__london_fog.mp4
 
 # Tek bir adımı yeniden çalıştırmak (önceki adımlar cache'ten gelir):
 python main.py step translate samples\gosteri.mp4
@@ -163,6 +168,21 @@ Tüm modeller, eşikler, klip uzunlukları, font, renkler ve Claude modu buradad
   bitlerdeki kelimesiz boşluklar VAD kapalı yeniden transkribe edilir (`gapfill`).
 - **Yedek:** Proje git deposudur; `samples/`, `work/`, `out/`, `models/`, `.venv/`, `.env` hariç tutulur.
 - **Loglar:** Konsol + `clipper.log`. Her Claude çağrısının süresi (api modunda token ve maliyet) loglanır.
+
+## Kullanılan modeller ve lisansları
+
+Model dosyaları **depoda yoktur** (`models/` git dışıdır). Whisper modeli ilk çalıştırmada otomatik
+indirilir; diğerleri [Kurulum](#kurulum-adım-adım) bölümündeki komutlarla bir kez indirilir.
+
+| Model / bileşen | Kullanım | Lisans |
+|---|---|---|
+| [faster-whisper](https://github.com/SYSTRAN/faster-whisper) + Whisper large-v3 ağırlıkları | Transkript | MIT |
+| [jrgillick/laughter-detection](https://github.com/jrgillick/laughter-detection) | Kahkaha tespiti | MIT |
+| [MediaPipe](https://github.com/google-ai-edge/mediapipe) (BlazeFace, YAMNet) | Yüz tespiti, yedek kahkaha tespiti | Apache 2.0 |
+| [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) (`realesr-general-x4v3`) + realesrgan-ncnn-vulkan | İsteğe bağlı kalite yükseltme | BSD-3-Clause / MIT |
+| [Montserrat](https://github.com/JulietaUla/Montserrat) (`fonts/`) | Altyazı fontu | SIL OFL 1.1 ([fonts/OFL.txt](fonts/OFL.txt)) |
+
+Proje kodu MIT lisanslıdır ([LICENSE](LICENSE)).
 
 ## Testler
 

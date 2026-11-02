@@ -19,7 +19,6 @@ scenedetect==0.7.2
 # Web arayüzü
 fastapi==0.162.0
 uvicorn[standard]==0.54.0
-python-multipart==0.0.33
 ruamel.yaml==0.19.1
 # Testler (API: httpx; arayüz uçtan uca: playwright + yüklü Edge)
 httpx==0.28.1

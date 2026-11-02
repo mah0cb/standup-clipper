@@ -7,3 +7,6 @@ models/
 __pycache__/
 .pytest_cache/
 clipper.log
+*.mp4
+*.mkv
+*.wav
