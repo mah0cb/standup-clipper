@@ -45,6 +45,7 @@ mkdir models, fonts
 curl.exe -L -o models\yamnet.tflite https://storage.googleapis.com/mediapipe-models/audio_classifier/yamnet/float32/1/yamnet.tflite
 curl.exe -L -o models\blaze_face_short_range.tflite https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite
 curl.exe -L -o models\blaze_face_full_range.tflite https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_full_range/float16/1/blaze_face_full_range.tflite
+curl.exe -L -o models\pose_landmarker_lite.task https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task
 curl.exe -L -o fonts\Montserrat-ExtraBold.ttf https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf/Montserrat-ExtraBold.ttf
 git clone --depth 1 https://github.com/jrgillick/laughter-detection models\laughter-detection
 ```
@@ -157,7 +158,8 @@ Tüm modeller, eşikler, klip uzunlukları, font, renkler ve Claude modu buradad
 - `select.per_minutes`, `select.max_bits`, `select.min_score` — her 5 dakikaya en fazla 1 bit, üst sınır 12, 6 puan altı elenir.
 - `candidates.pause` — bundan uzun duraklamalar da cümle sınırı sayılır; klipler yalnızca cümle başında başlar.
 - `laughter.stride` — GPU'da (CUDA torch) 1 önerilir (5 dk ses ~15 sn). CPU'da 4 yapın (~4 kat hızlı).
-- `subs.margin_v`, `subs.size` — altyazının yeri ve boyutu.
+- `safe_zone` — Instagram/TikTok/Shorts arayüzünün kapatmadığı alan: altyazı ve notlar y=1050–1450 bandında,
+  soldan 60, sağdan 140 px boşlukla. `subs.size` altyazı boyutu, `subs.credit_y` üstteki komedyen adının yeri.
 - `claude.mode` — `cli` (aboneliğiniz, ek ücret yok) veya `api`.
 
 ## Notlar
@@ -166,9 +168,13 @@ Tüm modeller, eşikler, klip uzunlukları, font, renkler ve Claude modu buradad
   (torch 1.3, librosa 0.8) olduğundan doğrudan çalışmaz; `clipper/laughter.py` yalnızca reponun model
   tanımını ve checkpoint'ini kullanır, özellik çıkarımını yeni librosa API'siyle yapar. Model yüklenemezse
   otomatik olarak YAMNet'in (MediaPipe) kahkaha sınıflarına geçer (`laughter.backend: yamnet` ile zorlanabilir).
-- **Crop:** Her çekim için yüz merkezlerinin yumuşatılmış medyanı kullanılır. Önce yakın çekim, yüz
-  bulunamazsa uzak mesafe (full range) modeli denenir; karenin alt kısmındaki yüzler seyirci sayılıp elenir
-  (`reframe.max_face_y`). Yüz bulunamayan çekim bir önceki çekimin konumunu kullanır.
+- **Crop:** Kamera açısı değişince kadraj atlar; çekim içinde ölü bölgeli takip yapılır: yüz kırpılan alanın
+  orta %40'ındayken kadraj durur, dışına çıkacaksa yumuşakça kayar (`reframe.center_band`). Önce yakın çekim,
+  yüz bulunamazsa uzak mesafe (full range) yüz modeli, o da bulamazsa MediaPipe pose ile gövde merkezi denenir;
+  karenin alt kısmındaki yüzler seyirci sayılıp elenir (`reframe.max_face_y`). Yüz bulunamayan karelerde son
+  bulunan konum, hiç yüz olmayan çekimde bir önceki çekimin konumu kullanılır.
+- **Güvenli alan:** Hook ve komedyen adı üstte (hook 3 sn sonra kaybolur, ad kalır); altyazı ve notlar
+  platform arayüzünün (alt ~%20, sağ ~%12) dışında kalan `safe_zone` bandında.
 - **Altyazı kapsaması:** Her Whisper kelimesi bir altyazı grubunda olmalı; eksik varsa çeviri eksik kelimeler
   belirtilerek yeniden istenir, 2 denemede düzelmezse onay sayfasında kırmızıyla işaretlenir. Ayrıca seçilen
   bitlerdeki kelimesiz boşluklar VAD kapalı yeniden transkribe edilir (`gapfill`).
@@ -184,7 +190,7 @@ indirilir; diğerleri [Kurulum](#kurulum-adım-adım) bölümündeki komutlarla 
 |---|---|---|
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) + Whisper large-v3 ağırlıkları | Transkript | MIT |
 | [jrgillick/laughter-detection](https://github.com/jrgillick/laughter-detection) | Kahkaha tespiti | MIT |
-| [MediaPipe](https://github.com/google-ai-edge/mediapipe) (BlazeFace, YAMNet) | Yüz tespiti, yedek kahkaha tespiti | Apache 2.0 |
+| [MediaPipe](https://github.com/google-ai-edge/mediapipe) (BlazeFace, Pose Landmarker, YAMNet) | Yüz/kişi tespiti, yedek kahkaha tespiti | Apache 2.0 |
 | [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) (`realesr-general-x4v3`) + realesrgan-ncnn-vulkan | İsteğe bağlı kalite yükseltme | BSD-3-Clause / MIT |
 | [Montserrat](https://github.com/JulietaUla/Montserrat) (`fonts/`) | Altyazı fontu | SIL OFL 1.1 ([fonts/OFL.txt](fonts/OFL.txt)) |
 

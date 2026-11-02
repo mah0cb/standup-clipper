@@ -13,10 +13,10 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Main,{font},{size},{hl},{primary},{oc},&H80000000,{bold},0,0,0,100,100,0,0,1,{outline},0,{main_align},60,60,{margin_v},1
-Style: Hook,{font},{hook_size},{primary},{primary},{oc},&H80000000,{bold},0,0,0,100,100,0,0,1,{outline},0,8,60,60,{hook_margin_v},1
-Style: Note,{font},{note_size},{primary},{primary},{oc},&H80000000,0,0,0,0,100,100,0,0,1,3,0,8,60,60,{note_margin_v},1
-Style: Credit,{font},{credit_size},{primary},{primary},{oc},&H80000000,0,0,0,0,100,100,0,0,1,2,0,2,60,60,{credit_margin_v},1
+Style: Main,{font},{size},{hl},{primary},{oc},&H80000000,{bold},0,0,0,100,100,0,0,1,{outline},0,{main_align},{ml},{mr},{margin_v},1
+Style: Hook,{font},{hook_size},{primary},{primary},{oc},&H80000000,{bold},0,0,0,100,100,0,0,1,{outline},0,2,{ml},{mr},{hook_margin_v},1
+Style: Note,{font},{note_size},{primary},{primary},{oc},&H80000000,0,0,0,0,100,100,0,0,1,3,0,8,{ml},{mr},{note_margin_v},1
+Style: Credit,{font},{credit_size},{credit_color},{credit_color},&H80000000,&H80000000,0,0,0,0,100,100,0,0,1,2,0,8,{ml},{mr},{credit_y},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -52,22 +52,27 @@ def karaoke(lines, dur_cs):
     return "\\N".join(" ".join(p) for p in out)
 
 
-def main_position(layout, src_w, src_h, s):
-    """Ana altyazının hizası ve dikey marjı. blur_bg: ortadaki videonun hemen altı (üstten hizalı)."""
+def main_position(layout, src_w, src_h, s, z):
+    """Ana altyazının hizası ve dikey marjı; alt kenarı güvenli alanın içinde (z["text_bottom"]).
+    blur_bg: ortadaki videonun hemen altı (üstten hizalı), iki satır güvenli alana sığmıyorsa yukarı çekilir."""
     if layout == "blur_bg":
         fg_h = round(1080 * src_h / src_w / 2) * 2
-        return 8, (1920 - fg_h) // 2 + fg_h + s["below_video_gap"]
-    return 2, s["margin_v"]
+        two_lines = round(2 * s["size"] * 1.25 + 2 * s["outline"])
+        return 8, min((1920 - fg_h) // 2 + fg_h + s["below_video_gap"], z["text_bottom"] - two_lines)
+    return 2, 1920 - z["text_bottom"]
 
 
-def build_ass(bit, tr, comedian, s, main_align=2, margin_v=None):
+def build_ass(bit, tr, comedian, s, z, main_align=2, margin_v=None):
+    """z: güvenli alan (config safe_zone). Altyazı ve notlar text_top–text_bottom bandında, yatayda left/right
+    boşluklu; hook üstte, komedyen adı hook'un hemen altında (hook alttan hizalı, uzunsa yukarı doğru büyür)."""
     t0, dur = bit["start"], bit["end"] - bit["start"]
     font = font_name(s)
     head = HEADER.format(font=font, bold=0 if "Montserrat" in font else -1, hl=s["highlight"], oc=s["outline_color"],
-                         main_align=main_align, margin_v=s["margin_v"] if margin_v is None else margin_v,
-                         **{k: s[k] for k in ("size", "primary", "outline", "hook_size",
-                                              "hook_margin_v", "credit_size", "credit_margin_v",
-                                              "note_size", "note_margin_v")})
+                         main_align=main_align, margin_v=1920 - z["text_bottom"] if margin_v is None else margin_v,
+                         ml=z["left"], mr=z["right"], note_margin_v=z["text_top"],
+                         hook_margin_v=1920 - s["credit_y"] + s["credit_gap"],
+                         **{k: s[k] for k in ("size", "primary", "outline", "hook_size", "credit_size", "credit_color",
+                                              "credit_y", "note_size")})
     ev = [f"Dialogue: 1,{ts(0)},{ts(min(s['hook_secs'], dur))},Hook,,0,0,0,,{{\\fad(150,300)}}{esc(bit['hook_tr'])}"]
     if comedian:
         ev.append(f"Dialogue: 0,{ts(0)},{ts(dur)},Credit,,0,0,0,,{esc(comedian)}")
@@ -92,7 +97,8 @@ def run(video, cfg, force=True, layout="crop"):
     """Hızlı ve onay sayfasındaki düzeltmelere bağlı olduğu için her seferinde yeniden üretilir."""
     wd = work_dir(video)
     vi = video_info(video)
-    align, margin = main_position(layout, vi["w"], vi["h"], cfg["subs"])
+    z = cfg["safe_zone"]
+    align, margin = main_position(layout, vi["w"], vi["h"], cfg["subs"], z)
     bits = select_llm.run(video, cfg)
     trs = proofread.run(video, cfg)
     meta = read_json(wd / "meta.json") if (wd / "meta.json").exists() else {}
@@ -100,6 +106,6 @@ def run(video, cfg, force=True, layout="crop"):
     for b in bits:
         p = wd / "subs" / f"{b['n']}.ass"
         p.parent.mkdir(exist_ok=True)
-        p.write_text(build_ass(b, trs[str(b["n"])], meta.get("comedian", ""), cfg["subs"], align, margin), encoding="utf-8")
+        p.write_text(build_ass(b, trs[str(b["n"])], meta.get("comedian", ""), cfg["subs"], z, align, margin), encoding="utf-8")
         paths[b["n"]] = p
     return paths

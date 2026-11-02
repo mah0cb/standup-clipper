@@ -45,15 +45,19 @@ python main.py step <adim> <video>       # tek adımı zorla yeniden çalıştı
 
 ## Önemli config
 `render.layout`, `upscale.mode/tile/keep_frames`, `laughter.threshold` (0.4), `laughter.stride` (GPU'da 1),
-`select.per_minutes/max_bits/min_score`, `candidates.max_len` (90), `subs.size/note_size/margin_v`,
-`reframe.scene_threshold/min_shot/max_face_y`, `claude.mode` (cli = `claude -p`, abonelik | api), `claude.model`.
+`select.per_minutes/max_bits/min_score`, `candidates.max_len` (90), `subs.size/note_size/credit_y`, `safe_zone` (altyazı+not y 1050–1450, sol 60 / sağ 140 px),
+`reframe.scene_threshold/min_shot/max_face_y/center_band/pose_model`, `claude.mode` (cli = `claude -p`, abonelik | api), `claude.model`.
 
 ## Alınan kararlar
 - Claude çağrıları `claude_client.ask_json`: JSON şema doğrulama + 2 yeniden deneme; cli modunda boş geçici
   klasörde, araçlar kapalı çalışır. Zamanları LLM değil kod hesaplar (kelime indeksi → zaman).
 - jrgillick orijinal scripti modern sürümlerde çalışmıyor; yalnız model tanımı + checkpoint kullanılıyor.
 - torch CUDA 13.2 derlemesi (2.15 için cu128 yok). Whisper (ctranslate2) pip'ten gelen cuBLAS/cuDNN 12 DLL'lerini kullanır.
-- Yüz: önce short range, bulamazsa full range; karenin alt %40'ı seyirci sayılır.
+- Yüz: önce short range, bulamazsa full range, o da yoksa pose (`models/pose_landmarker_lite.task`) gövde merkezi;
+  karenin alt %40'ı seyirci sayılır (pose'ta burun). Çekim içi ölü bölgeli takip (`reframe.follow`): yüz kırpılan
+  alanın orta %40'ında tutulur; yol RDP ile sadeleşip ffmpeg crop x ifadesinde doğrusal geçiş olur.
+- Yerleşim: hook üstte alttan hizalı, komedyen adı hemen altında (yarı saydam); altyazı alttan `text_bottom`'a,
+  notlar üstten `text_top`'a hizalı. `test_rendered_text_stays_in_safe_zone` libass çıktısını pikselden ölçer.
 - Varsayılan: `render.layout: crop`, `upscale.mode: "off"` (telefonda fark görünmedi; ayarlardan açılabilir).
   YAML'da `off` tırnaklı olmalı (çıplak `off` PyYAML'da False); web ayar yazımı seçenekleri tırnaklı yazar.
 - Seçim: 30-60 sn'lik bitler tercih edilir; 60 sn yalnız kurulum gerektiriyorsa aşılır, en fazla `candidates.max_len`.
@@ -66,6 +70,7 @@ python main.py step <adim> <video>       # tek adımı zorla yeniden çalıştı
 
 ## Bilinen sorunlar
 - Upscale yavaş: RTX 4060'ta ~7.9 kare/sn (85 sn'lik klip ≈ 5.3 dk toplam), geçici kareler birkaç GB.
-- Crop çekim içinde sabit; komedyen tek çekimde çok gezerse kadrajdan kayabilir.
+- Komedyen kaynak karenin kenarındaysa crop daha öteye kayamaz; orta %40 kuralı orada sağlanamaz.
+- Komedyen adı (y≈470) yakın çekimlerde başın üstüne denk gelebilir.
 - Whisper bazen kahkaha altındaki konuşmayı atlar; gapfill kısmen kurtarır.
 - `claude -p` kullanım limitine takılırsa adım hata verir; limit sıfırlanınca aynı komut cache'ten devam eder.

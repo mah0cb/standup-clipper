@@ -39,31 +39,42 @@ gapfill:                   # seçilen bitlerde Whisper'ın atladığı konuşmay
 subs:
   font: Montserrat ExtraBold      # fonts/ klasöründen yüklenir
   fallback_font: Arial Black
-  size: 64                  # 38 karakterlik satır ~860 px, 1080 genişliğe sığar
+  size: 64                  # 38 karakterlik satır ~860 px, güvenli alandaki 880 px'e sığar
   outline: 4
-  margin_v: 420             # ana altyazının alttan uzaklığı (px)
   primary: "&H00FFFFFF"     # beyaz (ASS: &HAABBGGRR)
   highlight: "&H0000FFFF"   # sarı karaoke vurgusu
   outline_color: "&H00000000"
   hook_size: 78
-  hook_margin_v: 260
   hook_secs: 3
-  credit_size: 36
-  credit_margin_v: 90
+  credit_size: 36           # komedyen adı: üstte, hook'un hemen altında; hook bitince tek başına kalır
+  credit_y: 470             # komedyen adının üst kenarı (px); hook bunun hemen üstünde, alttan hizalı
+  credit_gap: -12           # hook kutusu ile komedyen adı arası (px); fontun iç boşluğu ~30 px eklediği için görünen boşluk ~18 px
+  credit_color: "&H59FFFFFF" # yarı saydam beyaz (alfa 59 ≈ %65 opak)
   max_chars: 38
   max_lines: 2
-  note_size: 58             # açıklama notu (ör. "CPR = kalp masajı"), üstte, hook'un altında
-  note_margin_v: 400
+  note_size: 58             # açıklama notu (ör. "CPR = kalp masajı"), güvenli bandın üstünde, altyazının üstünde
   note_secs: 2.5
   note_max_chars: 40
   below_video_gap: 30       # blur_bg: altyazının ortadaki videonun altından uzaklığı (px)
+
+safe_zone:                  # Instagram/TikTok/Shorts arayüzünün kapatmadığı alan (1080x1920 üzerinde px)
+  text_top: 1050            # altyazı ve notlar bu dikey bandın içinde kalır
+  text_bottom: 1450         # altında kullanıcı adı / açıklama (alt ~%20)
+  left: 60                  # yatay boşluklar
+  right: 140                # sağda beğeni/yorum butonları (~%12)
+  ui_bottom: 0.20           # arayüzün kapladığı alt oran (yalnız kontrol görseli için)
+  ui_right: 0.12            # arayüzün kapladığı sağ oran (yalnız kontrol görseli için)
 
 reframe:
   every_n: 5                # her 5 karede bir yüz tespiti
   smooth_window: 15         # hareketli ortalama penceresi (örnek sayısı)
   min_confidence: 0.5
   models: [blaze_face_short_range, blaze_face_full_range]   # sırayla denenir (full range: uzak/geniş çekim)
-  max_face_y: 0.6           # yüz merkezi karenin bu oranından aşağıdaysa seyirci sayılır
+  max_face_y: 0.6           # yüz merkezi (pose'ta burun) karenin bu oranından aşağıdaysa seyirci sayılır
+  pose_model: pose_landmarker_lite   # yüz bulunamazsa gövde merkezi (models/*.task); null = kapalı
+  center_band: 0.4          # yüz kırpılan alanın yatayda orta %40'ında tutulur (çekim içi takip)
+  hold_gap: 0.5             # bundan uzun yüzsüz aralıkta kamera son konumda bekler (sn)
+  path_tol: 12              # takip yolu sadeleştirme toleransı (px)
   scene_threshold: 27       # PySceneDetect ContentDetector eşiği (düşük = daha çok kesme)
   min_shot: 1.0             # bundan kısa çekimler öncekiyle birleşir (sn)
 
