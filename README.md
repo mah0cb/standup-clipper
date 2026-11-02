@@ -15,7 +15,7 @@ Tamamen yerelde çalışır (Whisper + kahkaha modeli + ffmpeg); yalnızca seçi
 
 ```
 video.mp4 → ses → transkript → kahkaha → adaylar → Claude seçimi → kaçan konuşmayı kurtarma
-          → Claude çevirisi (+ kapsama kontrolü) → Claude çeviri kontrolü → ASS altyazı
+          → Claude çevirisi (+ kapsama kontrolü) → Claude çeviri kontrolü → Claude paylaşım açıklaması → ASS altyazı
           → çekim bazlı yüz takipli crop → [onay sayfası]
           → render: kes/kırp → [Real-ESRGAN] → 1080x1920 → altyazı (mp4 + açıklama .txt)
 ```
@@ -71,13 +71,15 @@ Proje kökündeki `Baslat.bat`'a çift tıklayın; panel
 http://127.0.0.1:8770/ adresinde açılır (yalnızca bu bilgisayardan erişilebilir).
 
 - **Kütüphane:** `samples/` içindeki videolar, süre, çözünürlük ve durum. Sürükle-bırak ile video ekleme
-  (dosya adı otomatik `komedyen__gosteri.mp4`). 720p altı videolarda kırmızı uyarı.
+  (dosya adı otomatik `komedyen__gosteri.mp4`). 720p altı videolarda kırmızı uyarı. Satıra tıklayınca
+  komedyen ve gösteri adı düzenlenir (açıklamadaki 🎤 satırında kullanılır).
 - **İşleme:** adım adım ilerleme, süreler ve canlı log. Hata olursa Türkçe özet ve "Kaldığı yerden devam et".
   Claude limiti dolarsa "Claude limiti doldu" uyarısı ve isteğe bağlı otomatik yeniden deneme (30 dk arayla).
 - **Onay:** her klipte kaynak videodan o aralığı oynatan önizleme, altyazısız kelimeler kırmızı,
-  "Kaydet ve render et".
+  düzenlenebilir paylaşım açıklaması, "Kaydet ve render et".
 - **Çıktılar:** klipler tarayıcıda oynatılır; açıklama + hashtag kopyalama, "Klasörde göster",
-  YouTube/Instagram/TikTok paylaşım takibi ve "henüz paylaşılmamış" filtresi.
+  YouTube/Instagram/TikTok paylaşım takibi, "henüz paylaşılmamış" filtresi ve "Açıklamaları yeniden yaz"
+  (yalnız `.txt`'ler güncellenir, video yeniden render edilmez).
 - **Ayarlar:** önemli `config.yaml` ayarları form olarak (yorumlar korunarak kaydedilir).
 
 İşler sırayla, tek tek çalışır; durum `work/_jobs.json`'da tutulur, sunucu kapanıp açılsa da kaybolmaz.
@@ -101,6 +103,9 @@ python main.py render samples\gosteri.mp4 --layout crop --upscale always
 # "zoltan_kaszas__london_fog.mp4" → "Zoltan Kaszas"). Sonra istediğiniz videonun onay sayfasını açın:
 python main.py run-all samples
 python main.py review samples\zoltan_kaszas__london_fog.mp4
+
+# Açıklamaları yeniden yaz (out/ içindeki .txt'ler güncellenir, render yok):
+python main.py captions samples\gosteri.mp4
 
 # Tek bir adımı yeniden çalıştırmak (önceki adımlar cache'ten gelir):
 python main.py step translate samples\gosteri.mp4
@@ -130,15 +135,16 @@ altına çıkarılır, işlem bitince silinir (`upscale.keep_frames`). RTX 4060'
 | `work/{video}/words.json`, `segments.json` | Kelime zaman damgalı transkript |
 | `work/{video}/laughter.json` | `[{start, end, prob}]` kahkaha aralıkları |
 | `work/{video}/candidates.json` | En iyi 40 aday (cümle başından kahkaha sonuna) |
-| `work/{video}/selected.json` | Claude'un seçtiği bitler (puan, gerekçe, hook, açıklama, hashtag) |
+| `work/{video}/selected.json` | Claude'un seçtiği bitler (puan, gerekçe, ekrandaki hook) |
 | `work/{video}/gapfill.json` | Whisper'ın atladığı, VAD'sız yeniden transkripsiyonla kurtarılan kelimeler |
 | `work/{video}/translations.json` | Zamana hizalı Türkçe ifade grupları, açıklama notları, ABD→TR uyarlama listesi |
 | `work/{video}/translations_checked.json` | Çeviri kontrolünden geçmiş hali + yapılan değişiklikler (altyazı ve onay sayfası bunu kullanır) |
+| `work/{video}/captions.json` | Bit başına paylaşım açıklaması (onay sayfasında düzenlenebilir) |
 | `work/{video}/subs/{n}.ass` | Karaoke altyazı |
 | `work/{video}/reframe.json` | 9:16 crop kutusu + çekim bazlı x konumları |
 | `work/{video}/review.json` | Onaylanan klipler |
 | `work/{video}/timings.json` | Her adımın süresi |
-| `out/{video}/{n}_{hook}.mp4` + `.txt` | Dikey video + açıklama, 5 hashtag, komedyen adı |
+| `out/{video}/{n}_{hook}.mp4` + `.txt` | Dikey video + açıklama: merak uyandıran tek satır, 🎤 komedyen – gösteri, 5 hashtag |
 
 **Cache:** Her adımın JSON çıktısı varsa yeniden hesaplanmaz. Bir adımı zorla yeniden yapmak için `step`
 komutunu kullanın; sonraki adımları da güncellemek isterseniz onları da sırayla `step` ile çalıştırın.

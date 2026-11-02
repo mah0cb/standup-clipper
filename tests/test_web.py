@@ -6,7 +6,7 @@ import types
 import pytest
 from fastapi.testclient import TestClient
 
-from clipper import claude_client, common, jobs, web
+from clipper import captions, claude_client, common, jobs, web
 from clipper.common import read_json, write_json
 
 
@@ -17,6 +17,7 @@ def env(tmp_path, monkeypatch):
         (tmp_path / d).mkdir()
     shutil.copy(common.ROOT / "config.yaml", tmp_path / "config.yaml")
     monkeypatch.setattr(common, "ROOT", tmp_path)
+    monkeypatch.setattr(captions, "ROOT", tmp_path)
     monkeypatch.setattr(web, "SAMPLES", tmp_path / "samples")
     monkeypatch.setattr(web, "OUT", tmp_path / "out")
     monkeypatch.setattr(web, "SHARES", tmp_path / "work" / "_shares.json")
@@ -216,3 +217,30 @@ def test_cli_limit_error_detection():
     p = types.SimpleNamespace(returncode=1, stderr="", stdout=json.dumps({"is_error": True, "result": "bağlantı hatası"}))
     e = claude_client._cli_error(p)
     assert not isinstance(e, claude_client.ClaudeLimitError) and "bağlantı hatası" in str(e)
+
+
+def test_meta_edit_and_captions_job(env):
+    tiny_video(env.root / "samples" / "ismo_hello.mp4")
+    r = env.client.post("/api/videos/ismo_hello.mp4/meta", json={"comedian": "ISMO", "show": " Hello "})
+    assert r.json() == {"comedian": "ISMO", "show": "Hello"}
+    v = env.client.get("/api/videos").json()[0]
+    assert (v["comedian"], v["show"]) == ("ISMO", "Hello")
+    assert env.client.post("/api/videos/ismo_hello.mp4/meta", json={"comedian": " "}).status_code == 400
+    assert env.client.post("/api/videos/ismo_hello.mp4/captions").status_code == 409  # işlenmemiş
+    write_json(env.root / "work" / "ismo_hello" / "translations_checked.json", {})
+    j = env.client.post("/api/videos/ismo_hello.mp4/captions").json()
+    assert j["kind"] == "captions" and j["status"] == "queued"
+
+
+def test_review_saves_caption_and_updates_txt(env):
+    tiny_video(env.root / "samples" / "a__b.mp4")
+    wd = env.root / "work" / "a__b"
+    write_json(wd / "selected.json", [{"n": 1, "start": 0, "end": 30, "hook_tr": "h", "score": 8, "reason": "r"}])
+    write_json(wd / "translations_checked.json", {"1": {"groups": [], "notes": [], "replacements": [], "uncovered": [], "changes": []}})
+    write_json(wd / "captions.json", {"1": "eski"})
+    (env.root / "out" / "a__b").mkdir()
+    (env.root / "out" / "a__b" / "1_h.mp4").write_bytes(b"")
+    assert env.client.get("/api/videos/a__b.mp4/review").json()["captions"] == {"1": "eski"}
+    env.client.post("/api/videos/a__b.mp4/review", json={"approved": [1], "captions": {"1": "yeni açıklama\n\n🎤 A"}})
+    assert read_json(wd / "captions.json") == {"1": "yeni açıklama\n\n🎤 A"}
+    assert (env.root / "out" / "a__b" / "1_h.txt").read_text(encoding="utf-8") == "yeni açıklama\n\n🎤 A\n"

@@ -4,6 +4,7 @@
   python main.py run-all samples\                  → klasördeki tüm videolar (onay sayfası açmadan)
   python main.py review video.mp4                   → onay sayfasını açar
   python main.py render video.mp4                   → onaylanan klipleri render eder
+  python main.py captions video.mp4                 → açıklamaları yeniden yazar (render yok)
   python main.py step <adim> video.mp4              → tek adımı yeniden çalıştırır
 """
 import argparse
@@ -35,6 +36,7 @@ def main():
     ra = sub.add_parser("run-all", help="Klasördeki tüm videoları sırayla işle (onay sayfası açmadan)")
     ra.add_argument("folder")
     sub.add_parser("review", help="Onay sayfasını aç").add_argument("video")
+    sub.add_parser("captions", help="Açıklamaları yeniden yaz (.txt'ler güncellenir, render yok)").add_argument("video")
     s = sub.add_parser("step", help="Tek adımı yeniden çalıştır")
     s.add_argument("name", choices=list(STEPS))
     s.add_argument("video")
@@ -71,6 +73,8 @@ def main():
         review.run(a.video, cfg)
     elif a.cmd == "render":
         timed("render", a.video, cfg, layout=a.layout, upscale=a.upscale)
+    elif a.cmd == "captions":
+        timed("captions", a.video, cfg, force=True)
     else:
         timed(a.name, a.video, cfg, force=True)
 

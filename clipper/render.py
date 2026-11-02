@@ -4,7 +4,7 @@ import shutil
 import subprocess
 import time
 
-from . import reframe, select_llm, subtitles
+from . import captions, reframe, select_llm, subtitles
 from .common import ROOT, log, read_json, slug, video_info, work_dir
 
 ESRGAN = ROOT / "models" / "realesrgan"
@@ -100,18 +100,17 @@ def run(video, cfg, force=True, layout=None, upscale=None, only=None, out_dir=No
     if not approved:
         log.warning("Onaylanmış klip yok. Önce `python main.py review` ile onay sayfasında klip seçin.")
         return []
-    meta = read_json(wd / "meta.json") if (wd / "meta.json").exists() else {}
     bits = [b for b in select_llm.run(video, cfg) if b["n"] in approved]  # yalnız onaylılar işlenir
     boxes = reframe.run(video, cfg)
     subs = subtitles.run(video, cfg, layout=layout)
+    caps = captions.run(video, cfg)
     od = out_dir or ROOT / "out" / wd.name
     od.mkdir(parents=True, exist_ok=True)
     outs = []
     for b in bits:
         out = od / f"{b['n']}_{slug(b['hook_tr'], 40)}{suffix}.mp4"
         up = render_bit(video, b, boxes[str(b["n"])], subs[b["n"]].relative_to(ROOT).as_posix(), out, layout, mode, cfg)
-        out.with_suffix(".txt").write_text(
-            f"{b['description_tr']}\n\n{' '.join(b['hashtags'])}\n\n{meta.get('comedian', '')}\n", encoding="utf-8")
+        out.with_suffix(".txt").write_text(caps.get(str(b["n"]), "") + "\n", encoding="utf-8")
         log.info("Render edildi (%s%s): %s", layout, ", upscale %.0f sn" % up if up else "", out)
         outs.append(out)
     return outs

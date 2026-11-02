@@ -92,3 +92,14 @@ def test_comedian_from_filename():
     assert cf("samples/zoltan_kaszas__london_fog.mp4") == "Zoltan Kaszas"
     assert cf("İlker_ayrık__gosteri.mkv") == "İlker Ayrık"
     assert cf("ismo.mp4") == "Ismo"
+
+
+def test_video_meta_show_from_meta_or_filename(tmp_path, monkeypatch):
+    from clipper import common
+    monkeypatch.setattr(common, "ROOT", tmp_path)
+    assert common.video_meta("samples/zoltan_kaszas__london_fog.mp4") == ("Zoltan Kaszas", "London Fog")
+    assert common.video_meta("samples/ismo_hello.mp4") == ("Ismo Hello", "")  # "__" yoksa adın tamamı komedyen
+    common.save_meta("samples/ismo_hello.mp4", "ISMO", "Hello")
+    assert common.video_meta("samples/ismo_hello.mp4") == ("ISMO", "Hello")
+    common.save_meta("samples/ismo_hello.mp4", "ISMO")  # gösteri verilmezse korunur
+    assert common.video_meta("samples/ismo_hello.mp4") == ("ISMO", "Hello")

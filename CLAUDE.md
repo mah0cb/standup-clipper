@@ -19,7 +19,7 @@ audio → transcribe (faster-whisper large-v3, GPU, noktalama için initial_prom
 CUDA torch, yedek YAMNet) → candidates (cümle sınırı: noktalama veya 0.6 sn+ duraklama) → select (Claude, kelime
 indeksiyle başlangıç/bitiş; her 5 dk'ya ≤1 bit, ≤12, puan ≥6) → gapfill (seçili bitlerdeki boşlukları VAD'sız
 yeniden transkribe) → translate (Claude, sistem prompt'unda çeviri kuralları, kapsama kontrolü, notlar) →
-proofread (Claude, `translations_checked.json`) → subtitles (ASS) → reframe (PySceneDetect çekimleri + MediaPipe
+proofread (Claude, `translations_checked.json`) → captions (Claude, tüm bitler tek çağrıda, `captions.json`) → subtitles (ASS) → reframe (PySceneDetect çekimleri + MediaPipe
 yüz → çekim başına crop x) → [review: onay sayfası] → render (crop|blur_bg, isteğe bağlı Real-ESRGAN, altyazı en son).
 
 ## Web arayüzü
@@ -39,6 +39,7 @@ python main.py run <video> --comedian "Ad" [--no-review]
 python main.py run-all <klasör>          # onay açmadan, komedyen adı dosya adından (ad__gosteri.mp4)
 python main.py review <video>
 python main.py render <video> [--layout crop|blur_bg] [--upscale auto|always|off]
+python main.py captions <video>          # açıklamaları yeniden yazar, yalnız out/*.txt (render yok)
 python main.py step <adim> <video>       # tek adımı zorla yeniden çalıştırır
 ```
 
@@ -57,6 +58,10 @@ python main.py step <adim> <video>       # tek adımı zorla yeniden çalıştı
   YAML'da `off` tırnaklı olmalı (çıplak `off` PyYAML'da False); web ayar yazımı seçenekleri tırnaklı yazar.
 - Seçim: 30-60 sn'lik bitler tercih edilir; 60 sn yalnız kurulum gerektiriyorsa aşılır, en fazla `candidates.max_len`.
 - Upscale yalnız crop düzeninde ve yalnız onaylı kliplerde; JPEG kareler tam aralıktan tv aralığına çevrilir.
+- Açıklama (`captions.py`): Claude yalnız 1. satırı (hook, ≤80, punchline'ı ele vermez) ve konu etiketini yazar;
+  `🎤 Komedyen – Gösteri` satırını ve sabit etiketleri (#standup #standupkomedi #türkçealtyazı #komedyen) kod ekler.
+  Kurallar `make_check`'te (bağlaçla başlama, ≤1 emoji, reklam kalıbı, genel etiket yasak). Seçim artık açıklama üretmez.
+- Gösteri adı: `meta.json`'daki `show`, yoksa dosya adındaki `__` sonrası (`common.video_meta`); panelde satıra tıklayıp düzenlenir.
 - Komedyen adı dosya adından standart büyük harfle (yabancı isimler: "ismo" → "Ismo").
 
 ## Bilinen sorunlar

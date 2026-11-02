@@ -16,6 +16,40 @@ def load_config(path=ROOT / "config.yaml"):
     return yaml.safe_load(Path(path).read_text(encoding="utf-8"))
 
 
+def _title(s):
+    # Komedyenler çoğunlukla yabancı: standart büyük harf (i → I); dosya adında "İ" yazılıysa korunur
+    return " ".join(w[0].upper() + w[1:] for w in s.replace("_", " ").split())
+
+
+def comedian_from_filename(path):
+    """"zoltan_kaszas__london_fog.mp4" → "Zoltan Kaszas" (çift alt çizgiden önceki kısım)."""
+    return _title(Path(path).stem.split("__")[0])
+
+
+def show_from_filename(path):
+    """"zoltan_kaszas__london_fog.mp4" → "London Fog"; çift alt çizgi yoksa ""."""
+    parts = Path(path).stem.split("__")
+    return _title(parts[1]) if len(parts) > 1 else ""
+
+
+def save_meta(video, comedian="", show=None):
+    meta_p = work_dir(video) / "meta.json"
+    meta = read_json(meta_p) if meta_p.exists() else {}
+    if comedian:
+        meta["comedian"] = comedian
+    if show is not None:
+        meta["show"] = show
+    write_json(meta_p, {**meta, "video": str(Path(video).resolve())})
+
+
+def video_meta(video):
+    """(komedyen, gösteri): meta.json'daki değerler, yoksa dosya adından."""
+    p = work_dir(video) / "meta.json"
+    meta = read_json(p) if p.exists() else {}
+    show = meta["show"] if "show" in meta else show_from_filename(video)
+    return meta.get("comedian") or comedian_from_filename(video), show
+
+
 def slug(text, maxlen=60):
     # Dosya ve ffmpeg filtre yollarında sorun çıkarmayan ad (Türkçe harfler korunur)
     return re.sub(r"[^\w\-]+", "_", text).strip("_")[:maxlen] or "video"

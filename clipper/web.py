@@ -18,9 +18,9 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Streamin
 from pydantic import BaseModel
 
 from . import review as review_mod
-from .common import ROOT, load_config, read_json, slug, work_dir, write_json
+from .common import ROOT, load_config, read_json, slug, video_meta, work_dir, write_json
 from .jobs import FINAL, JobQueue
-from .pipeline import VIDEO_EXT, comedian_from_filename, save_meta
+from .pipeline import VIDEO_EXT, save_meta
 
 SAMPLES = ROOT / "samples"
 OUT = ROOT / "out"
@@ -105,14 +105,12 @@ def library(queue):
         if p.suffix.lower() not in VIDEO_EXT:
             continue
         wd = work_dir(p)
-        meta = read_json(wd / "meta.json") if (wd / "meta.json").exists() else {}
-        parts = p.stem.split("__")
-        show = " ".join(w[:1].upper() + w[1:] for w in parts[1].replace("_", " ").split()) if len(parts) > 1 else ""
+        comedian, show = video_meta(p)
         job = queue.latest_for(p.name)
         info = probe(p)
         sel = wd / "selected.json"
         items.append({
-            "name": p.name, "comedian": meta.get("comedian") or comedian_from_filename(p), "show": show, **info,
+            "name": p.name, "comedian": comedian, "show": show, **info,
             "low_res": bool(info["height"] and info["height"] < 720),
             "status": video_status(p.name, wd, job), "job": job,
             "bits": len(read_json(sel)) if sel.exists() else None,
@@ -189,9 +187,15 @@ class ReviewBody(BaseModel):
     approved: list[int] = []
     hooks: dict[str, str] = {}
     lines: dict[str, list[list[str]]] = {}
+    captions: dict[str, str] = {}
     render: bool = False
     layout: str | None = None
     upscale: str | None = None
+
+
+class MetaBody(BaseModel):
+    comedian: str
+    show: str = ""
 
 
 class RetryBody(BaseModel):
@@ -296,6 +300,21 @@ def create_app(queue=None, start_worker=True, open_url=None):
         sample_path(name)
         return queue.add(name, "render", body.model_dump())
 
+    @app.post("/api/videos/{name}/captions")
+    def captions(name: str):
+        """Açıklamaları yeniden yaz: yalnız .txt'ler güncellenir, video render edilmez."""
+        wd = work_dir(sample_path(name))
+        if not (wd / review_mod.TR_FILE).exists():
+            raise HTTPException(409, "Bu video henüz işlenmedi")
+        return queue.add(name, "captions")
+
+    @app.post("/api/videos/{name}/meta")
+    def meta(name: str, body: MetaBody):
+        if not body.comedian.strip():
+            raise HTTPException(400, "Komedyen adı gerekli")
+        save_meta(sample_path(name), body.comedian.strip(), body.show.strip())
+        return dict(zip(("comedian", "show"), video_meta(sample_path(name))))
+
     @app.get("/api/videos/{name}/review")
     def review_data(name: str):
         wd = work_dir(sample_path(name))
@@ -308,7 +327,7 @@ def create_app(queue=None, start_worker=True, open_url=None):
     def review_save(name: str, body: ReviewBody):
         wd = work_dir(sample_path(name))
         try:
-            review_mod.save(wd, body.model_dump(include={"approved", "hooks", "lines"}))
+            review_mod.save(wd, body.model_dump(include={"approved", "hooks", "lines", "captions"}))
         except ValueError as e:
             raise HTTPException(400, str(e))
         job = queue.add(name, "render", {"layout": body.layout, "upscale": body.upscale}) if body.render else None

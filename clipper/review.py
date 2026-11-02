@@ -4,7 +4,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import proofread, select_llm
+from . import captions, proofread, select_llm
 from .common import log, read_json, work_dir, write_json
 
 HTML = Path(__file__).with_name("review.html")
@@ -15,11 +15,12 @@ def load(wd):
     bits, trs = read_json(wd / "selected.json"), read_json(wd / TR_FILE)
     rv = wd / "review.json"
     approved = read_json(rv)["approved"] if rv.exists() else [b["n"] for b in bits]
-    return {"bits": bits, "translations": trs, "approved": approved}
+    cp = wd / "captions.json"
+    return {"bits": bits, "translations": trs, "approved": approved, "captions": read_json(cp) if cp.exists() else {}}
 
 
 def save(wd, body):
-    """Gövde: {approved:[n], hooks:{n:str}, lines:{n:[[satır,...] grup başına]}}"""
+    """Gövde: {approved:[n], hooks:{n:str}, lines:{n:[[satır,...] grup başına]}, captions:{n:str}}"""
     bits, trs = read_json(wd / "selected.json"), read_json(wd / TR_FILE)
     for b in bits:
         n = str(b["n"])
@@ -37,6 +38,12 @@ def save(wd, body):
     write_json(wd / "selected.json", bits)
     write_json(wd / TR_FILE, trs)
     write_json(wd / "review.json", {"approved": sorted(int(n) for n in body.get("approved", []))})
+    caps = {n: t.strip() for n, t in body.get("captions", {}).items() if t.strip()}
+    if caps:
+        cp = wd / "captions.json"
+        caps = {**(read_json(cp) if cp.exists() else {}), **caps}
+        write_json(cp, caps)
+        captions.write_txts(wd.name, caps)  # render edilmiş kliplerin .txt'si de güncellenir
 
 
 def make_server(wd, cfg, port):

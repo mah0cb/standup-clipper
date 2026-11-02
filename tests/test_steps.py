@@ -226,3 +226,67 @@ def test_encode_args():
     assert nv[nv.index("-cq") + 1] == "19" and "+faststart" in nv and "yuv420p" in nv and "192k" in nv
     x = render.encode_args(cfg, "libx264")
     assert x[x.index("-crf") + 1] == "18" and x[x.index("-preset") + 1] == "veryfast"
+
+
+def test_caption_tags_and_compose():
+    from clipper import captions
+    assert captions.tag_of("Joe List") == "joelist" and captions.tag_of("İlker Ayrık") == "ilkerayrik"
+    assert captions.compose("Bir kısaltma hayatına mal olabilir mi? 😅", "ISMO", "Hello", "#ingilizce") == (
+        "Bir kısaltma hayatına mal olabilir mi? 😅\n\n🎤 ISMO – Hello\n\n"
+        "#standup #standupkomedi #türkçealtyazı #ismo #ingilizce")
+    assert captions.compose("Soru mu?", "Joe List", "", "#evlilik").split("\n\n")[1] == "🎤 Joe List"
+
+
+@pytest.mark.parametrize("hook,topic,err", [
+    ("ama bazılarını bilmek zor", "#dil", "ile başlıyor"),
+    ("Çünkü neden olmasın?", "#dil", "ile başlıyor"),
+    ("Bu ne biçim soru? 😂😂", "#dil", "emoji"),
+    ("Kaçırma, çok komik bir hikaye", "#dil", "reklam"),
+    ("Havalimanı ne kadar uzakta", "#uçak", "aynısı"),
+    ("Havaalanına ne zaman gidilir?", "#komedi", "genel"),
+    ("Havaalanına ne zaman gidilir?", "#ismo", "genel"),
+    ("Havaalanına ne zaman gidilir?", "#iki kelime", "tek"),
+])
+def test_caption_check_rejects(hook, topic, err):
+    from clipper import captions
+    check = captions.make_check([{"n": 1, "hook_tr": "Havalimanı ne kadar uzakta?"}], "ISMO")
+    with pytest.raises(ValueError, match=err):
+        check({"captions": [{"n": 1, "hook": hook, "topic": topic}]})
+
+
+def test_caption_check_requires_every_bit_and_normalizes():
+    from clipper import captions
+    check = captions.make_check([{"n": 1, "hook_tr": "a"}, {"n": 2, "hook_tr": "b"}], "ISMO")
+    with pytest.raises(ValueError, match="her klip"):
+        check({"captions": [{"n": 1, "hook": "Neden?", "topic": "#dil"}]})
+    d = {"captions": [{"n": 1, "hook": " Neden? ", "topic": "#Dil"}, {"n": 2, "hook": "Nasıl?", "topic": "#uçak"}]}
+    check(d)
+    assert d["captions"][0] == {"n": 1, "hook": "Neden?", "topic": "#dil"}
+
+
+def test_captions_run_uses_checked_subs_and_updates_txt(tmp_path, monkeypatch):
+    from clipper import captions, common
+    monkeypatch.setattr(common, "ROOT", tmp_path)
+    monkeypatch.setattr(captions, "ROOT", tmp_path)
+    video = tmp_path / "samples" / "ismo_hello.mp4"
+    common.save_meta(video, "ISMO", "Hello")
+    out = tmp_path / "out" / "ismo_hello"
+    out.mkdir(parents=True)
+    (out / "1_Eski.mp4").write_bytes(b"")
+    (out / "1_Eski.txt").write_text("eski", encoding="utf-8")
+    monkeypatch.setattr(captions.select_llm, "run", lambda v, c: [{"n": 1, "hook_tr": "Ekrandaki başlık"}])
+    monkeypatch.setattr(captions.proofread, "run", lambda v, c: {"1": {"groups": [{"en": "Hi.", "lines": ["Düzeltilmiş"]}]}})
+    seen = {}
+
+    def fake_ask(prompt, schema, cfg, check, **kw):
+        seen["prompt"], seen["system"] = prompt, kw["system"]
+        d = {"captions": [{"n": 1, "hook": "Bir selam neden bu kadar zor?", "topic": "#ingilizce"}]}
+        check(d)
+        return d
+    monkeypatch.setattr(captions, "ask_json", fake_ask)
+    caps = captions.run(video, load_config())
+    assert "Düzeltilmiş" in seen["prompt"] and "Ekrandaki başlık" in seen["prompt"] and "punchline" in seen["system"]
+    want = "Bir selam neden bu kadar zor?\n\n🎤 ISMO – Hello\n\n#standup #standupkomedi #türkçealtyazı #ismo #ingilizce"
+    assert caps == {"1": want}
+    assert (out / "1_Eski.txt").read_text(encoding="utf-8") == want + "\n"
+    assert read_json(tmp_path / "work" / "ismo_hello" / "captions.json") == caps

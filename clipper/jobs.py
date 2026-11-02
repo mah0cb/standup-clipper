@@ -44,6 +44,9 @@ def run_job(job, on_step):
         on_step("render", None)
         dt = pipeline.timed("render", video, cfg, layout=job["opts"].get("layout"), upscale=job["opts"].get("upscale"))
         on_step("render", dt)
+    elif job["kind"] == "captions":  # açıklamaları yeniden yaz, .txt'leri güncelle (render yok)
+        on_step("captions", None)
+        on_step("captions", pipeline.timed("captions", video, cfg, force=True))
     else:
         raise ValueError(f"bilinmeyen iş türü: {job['kind']}")
 

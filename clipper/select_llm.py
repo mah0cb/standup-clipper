@@ -32,8 +32,6 @@ Her seçim için:
 - score: 1-10 komiklik/viral potansiyel puanı
 - reason: kısa Türkçe gerekçe
 - hook_tr: ilk 3 saniyede ekranda yazacak, kısa (en fazla ~40 karakter), merak uyandıran Türkçe başlık; espriyi ele vermesin
-- description_tr: paylaşım için 1-2 cümlelik Türkçe açıklama
-- hashtags: 5 hashtag (# ile, Türkçe ağırlıklı)
 
 Satır biçimi: "#BAŞ-SON [zaman sn] cümle". [KAHKAHA] satırları seyirci kahkahasıdır.
 
@@ -46,13 +44,11 @@ SCHEMA = {
     "required": ["bits"],
     "properties": {"bits": {"type": "array", "items": {
         "type": "object",
-        "required": ["id", "start_word", "end_word", "score", "reason", "hook_tr", "description_tr", "hashtags"],
+        "required": ["id", "start_word", "end_word", "score", "reason", "hook_tr"],
         "properties": {
             "id": {"type": "integer"}, "start_word": {"type": "integer"}, "end_word": {"type": "integer"},
             "score": {"type": "integer", "minimum": 1, "maximum": 10},
             "reason": {"type": "string"}, "hook_tr": {"type": "string", "minLength": 1},
-            "description_tr": {"type": "string"},
-            "hashtags": {"type": "array", "minItems": 5, "maxItems": 5, "items": {"type": "string"}},
         }}}},
 }
 
