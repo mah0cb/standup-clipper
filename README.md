@@ -173,7 +173,7 @@ Tüm modeller, eşikler, klip uzunlukları, font, renkler ve Claude modu buradad
   yüz bulunamazsa uzak mesafe (full range) yüz modeli, o da bulamazsa MediaPipe pose ile gövde merkezi denenir;
   karenin alt kısmındaki yüzler seyirci sayılıp elenir (`reframe.max_face_y`). Yüz bulunamayan karelerde son
   bulunan konum, hiç yüz olmayan çekimde bir önceki çekimin konumu kullanılır.
-- **Güvenli alan:** Hook ve komedyen adı üstte (hook 3 sn sonra kaybolur, ad kalır); altyazı ve notlar
+- **Güvenli alan:** Hook ve komedyen adı üstte (ikisi de ilk 3 sn görünür, birlikte kaybolur); altyazı ve notlar
   platform arayüzünün (alt ~%20, sağ ~%12) dışında kalan `safe_zone` bandında.
 - **Altyazı kapsaması:** Her Whisper kelimesi bir altyazı grubunda olmalı; eksik varsa çeviri eksik kelimeler
   belirtilerek yeniden istenir, 2 denemede düzelmezse onay sayfasında kırmızıyla işaretlenir. Ayrıca seçilen

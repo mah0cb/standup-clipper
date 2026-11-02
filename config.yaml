@@ -46,7 +46,7 @@ subs:
   outline_color: "&H00000000"
   hook_size: 78
   hook_secs: 3
-  credit_size: 36           # komedyen adı: üstte, hook'un hemen altında; hook bitince tek başına kalır
+  credit_size: 36           # komedyen adı: üstte, hook'un hemen altında; hook ile birlikte (ilk hook_secs sn) görünür
   credit_y: 470             # komedyen adının üst kenarı (px); hook bunun hemen üstünde, alttan hizalı
   credit_gap: -12           # hook kutusu ile komedyen adı arası (px); fontun iç boşluğu ~30 px eklediği için görünen boşluk ~18 px
   credit_color: "&H59FFFFFF" # yarı saydam beyaz (alfa 59 ≈ %65 opak)

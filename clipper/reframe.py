@@ -152,6 +152,27 @@ def shots_from(cuts, samples, dur, W, H, c):
     return shots
 
 
+def x_at(keys, t):
+    """crop_x_expr'in Python karşılığı: anahtarlar arasında doğrusal, öncesi/sonrası sabit."""
+    if t <= keys[0][0]:
+        return keys[0][1]
+    for (t0, x0), (t1, x1) in zip(keys, keys[1:]):
+        if t < t1:
+            return x0 + (x1 - x0) * (t - t0) / (t1 - t0)
+    return keys[-1][1]
+
+
+def in_band(samples, shots, cw, band):
+    """Yüz merkezinin kırpılan alanın orta bandında (ör. %40) kaldığı örneklerin oranı."""
+    if not samples:
+        return None
+    ok = 0
+    for t, fx in samples:
+        s = ([s for s in shots if s["t"] <= t] or shots[:1])[-1]
+        ok += abs(fx - x_at(s["keys"], t) - cw / 2) <= band / 2 * cw
+    return round(ok / len(samples), 3)
+
+
 def shot_expr(s):
     """Bir çekimin crop x'i: anahtar noktalar arasında doğrusal geçiş, sondan sonra sabit."""
     keys = s.get("keys") or [(s["t"], s["x"])]  # eski reframe.json: çekim başına tek x
@@ -178,8 +199,11 @@ def run(video, cfg, force=False):
             cuts = detect_cuts(video, b["start"], b["end"], c)
             shots = shots_from(cuts, samples, b["end"] - b["start"], W, H, c)
             box = crop_box([x for _, x in samples], W, H, c["smooth_window"])
-            log.info("Bit #%d: %d/%d karede kişi (%d pose ile), %d çekim, %d takip noktası", b["n"], len(samples),
-                     checked, by_pose, len(shots), sum(len(s["keys"]) for s in shots))
-            out[str(b["n"])] = {**box, "shots": shots, "src_w": W, "src_h": H, "faces": len(samples), "checked": checked}
+            band = in_band(samples, shots, box["w"], c["center_band"])
+            log.info("Bit #%d: %d/%d karede kişi (%d pose ile), %d çekim, %d takip noktası, yüz orta bantta %s",
+                     b["n"], len(samples), checked, by_pose, len(shots), sum(len(s["keys"]) for s in shots),
+                     "–" if band is None else f"%{band * 100:.1f}")
+            out[str(b["n"])] = {**box, "shots": shots, "src_w": W, "src_h": H, "faces": len(samples), "checked": checked,
+                                "in_band": band}
         return out
     return cached(work_dir(video) / "reframe.json", make, force)

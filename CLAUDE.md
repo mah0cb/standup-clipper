@@ -56,7 +56,7 @@ python main.py step <adim> <video>       # tek adımı zorla yeniden çalıştı
 - Yüz: önce short range, bulamazsa full range, o da yoksa pose (`models/pose_landmarker_lite.task`) gövde merkezi;
   karenin alt %40'ı seyirci sayılır (pose'ta burun). Çekim içi ölü bölgeli takip (`reframe.follow`): yüz kırpılan
   alanın orta %40'ında tutulur; yol RDP ile sadeleşip ffmpeg crop x ifadesinde doğrusal geçiş olur.
-- Yerleşim: hook üstte alttan hizalı, komedyen adı hemen altında (yarı saydam); altyazı alttan `text_bottom`'a,
+- Yerleşim: hook üstte alttan hizalı, komedyen adı hemen altında (yarı saydam, hook ile birlikte kaybolur); altyazı alttan `text_bottom`'a,
   notlar üstten `text_top`'a hizalı. `test_rendered_text_stays_in_safe_zone` libass çıktısını pikselden ölçer.
 - Varsayılan: `render.layout: crop`, `upscale.mode: "off"` (telefonda fark görünmedi; ayarlardan açılabilir).
   YAML'da `off` tırnaklı olmalı (çıplak `off` PyYAML'da False); web ayar yazımı seçenekleri tırnaklı yazar.
@@ -71,6 +71,6 @@ python main.py step <adim> <video>       # tek adımı zorla yeniden çalıştı
 ## Bilinen sorunlar
 - Upscale yavaş: RTX 4060'ta ~7.9 kare/sn (85 sn'lik klip ≈ 5.3 dk toplam), geçici kareler birkaç GB.
 - Komedyen kaynak karenin kenarındaysa crop daha öteye kayamaz; orta %40 kuralı orada sağlanamaz.
-- Komedyen adı (y≈470) yakın çekimlerde başın üstüne denk gelebilir.
+- Komedyen adı (y≈470) ilk 3 sn yakın çekimlerde başın üstüne denk gelebilir.
 - Whisper bazen kahkaha altındaki konuşmayı atlar; gapfill kısmen kurtarır.
 - `claude -p` kullanım limitine takılırsa adım hata verir; limit sıfırlanınca aynı komut cache'ten devam eder.

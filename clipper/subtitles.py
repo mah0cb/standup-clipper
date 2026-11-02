@@ -64,8 +64,10 @@ def main_position(layout, src_w, src_h, s, z):
 
 def build_ass(bit, tr, comedian, s, z, main_align=2, margin_v=None):
     """z: güvenli alan (config safe_zone). Altyazı ve notlar text_top–text_bottom bandında, yatayda left/right
-    boşluklu; hook üstte, komedyen adı hook'un hemen altında (hook alttan hizalı, uzunsa yukarı doğru büyür)."""
+    boşluklu; hook üstte, komedyen adı hook'un hemen altında ve onunla birlikte kaybolur (hook alttan hizalı,
+    uzunsa yukarı doğru büyür)."""
     t0, dur = bit["start"], bit["end"] - bit["start"]
+    hook_end = ts(min(s["hook_secs"], dur))
     font = font_name(s)
     head = HEADER.format(font=font, bold=0 if "Montserrat" in font else -1, hl=s["highlight"], oc=s["outline_color"],
                          main_align=main_align, margin_v=1920 - z["text_bottom"] if margin_v is None else margin_v,
@@ -73,9 +75,9 @@ def build_ass(bit, tr, comedian, s, z, main_align=2, margin_v=None):
                          hook_margin_v=1920 - s["credit_y"] + s["credit_gap"],
                          **{k: s[k] for k in ("size", "primary", "outline", "hook_size", "credit_size", "credit_color",
                                               "credit_y", "note_size")})
-    ev = [f"Dialogue: 1,{ts(0)},{ts(min(s['hook_secs'], dur))},Hook,,0,0,0,,{{\\fad(150,300)}}{esc(bit['hook_tr'])}"]
+    ev = [f"Dialogue: 1,{ts(0)},{hook_end},Hook,,0,0,0,,{{\\fad(150,300)}}{esc(bit['hook_tr'])}"]
     if comedian:
-        ev.append(f"Dialogue: 0,{ts(0)},{ts(dur)},Credit,,0,0,0,,{esc(comedian)}")
+        ev.append(f"Dialogue: 0,{ts(0)},{hook_end},Credit,,0,0,0,,{{\\fad(150,300)}}{esc(comedian)}")
     for nt in tr.get("notes", []):
         st = nt["start"] - t0
         ev.append(f"Dialogue: 1,{ts(st)},{ts(min(st + s['note_secs'], dur))},Note,,0,0,0,,"

@@ -49,7 +49,7 @@ def test_build_ass():
     assert "PlayResX: 1080" in ass and "PlayResY: 1920" in ass
     assert "Dialogue: 1,0:00:00.00,0:00:03.00,Hook" in ass
     assert "(ne)" in ass  # süslü parantez kaçırıldı
-    assert "Credit,,0,0,0,,Ali Veli" in ass
+    assert r"Dialogue: 0,0:00:00.00,0:00:03.00,Credit,,0,0,0,,{\fad(150,300)}Ali Veli" in ass  # hook ile birlikte biter
     assert "Dialogue: 0,0:00:00.50,0:00:02.20,Main" in ass  # sonraki gruba kadar ekranda
 
 
@@ -297,14 +297,7 @@ def test_captions_run_uses_checked_subs_and_updates_txt(tmp_path, monkeypatch):
 RF = {"center_band": 0.4, "hold_gap": 0.5, "path_tol": 12, "min_shot": 1.0, "smooth_window": 15}
 
 
-def x_at(keys, t):
-    """crop_x_expr ile aynı: anahtarlar arasında doğrusal, öncesi/sonrası sabit."""
-    if t <= keys[0][0]:
-        return keys[0][1]
-    for (t0, x0), (t1, x1) in zip(keys, keys[1:]):
-        if t < t1:
-            return x0 + (x1 - x0) * (t - t0) / (t1 - t0)
-    return keys[-1][1]
+x_at = reframe.x_at
 
 
 def test_follow_keeps_walking_face_in_center_band():
@@ -316,6 +309,8 @@ def test_follow_keeps_walking_face_in_center_band():
     assert len(keys) < 15  # sadeleştirilmiş yol, ffmpeg ifadesi kısa
     for t, fx in samples:
         assert abs(fx - (x_at(keys, t) + cw / 2)) <= 0.2 * cw, t  # yüz orta %40'ta
+    assert reframe.in_band(samples, [{"t": 0.0, "keys": keys}], cw, 0.4) == 1.0
+    assert reframe.in_band(samples, [{"t": 0.0, "keys": [(0.0, 0)]}], cw, 0.4) < 0.2  # sabit crop'ta yüz kaçar
     expr = reframe.crop_x_expr([{"t": 0.0, "keys": keys}])
     assert expr.count("if(") == len(keys) - 1
 
@@ -376,7 +371,8 @@ def test_rendered_text_stays_in_safe_zone(tmp_path):
         assert not lit(img, 1920 - int(1920 * z["ui_bottom"]), 1920)  # alttaki arayüz alanı boş
         assert not [p for p in lit(img, 0, 1920) if p[0] >= 1080 * (1 - z["ui_right"])]  # sağ butonlar boş
     top1, top4 = (lit(cv2.imread(str(tmp_path / f"f{t}.png")), 0, 900) for t in (1, 4))
-    credit_y = (min(y for _, y in top4), max(y for _, y in top4))  # 4. sn: hook bitti, yalnız komedyen adı
-    assert s["credit_y"] - 5 <= credit_y[0] and credit_y[1] < s["credit_y"] + 60
-    hook_bottom = max(y for _, y in top1 if y < credit_y[0])
-    assert 5 < credit_y[0] - hook_bottom < 25  # komedyen adı hook'un hemen altında
+    assert not top4  # 4. sn: hook ve komedyen adı birlikte kayboldu
+    credit = [y for _, y in top1 if y >= s["credit_y"] - 5]
+    assert credit and max(credit) < s["credit_y"] + 60  # komedyen adı ilk saniyelerde yerinde
+    hook_bottom = max(y for _, y in top1 if y < min(credit))
+    assert 5 < min(credit) - hook_bottom < 25  # komedyen adı hook'un hemen altında
