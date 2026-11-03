@@ -78,7 +78,14 @@ reframe:                    # "kameraman": yalnız komedyeni takip eder, çekim 
   min_detect_rate: 0.5      # komedyenin bulunduğu örnek oranı bundan azsa → ara çekim
   max_jump: 0.15            # ardışık konumlar kare genişliğinin bu oranından fazla zıplıyorsa...
   max_jump_ratio: 0.1       # ...ve bu tür zıplamalar geçişlerin bu oranını aşıyorsa → ara çekim
+  track_margin: 0.1         # takip sürekliliği: son tanınan yüze konum/boyutça yakın yüz için eşik bu kadar düşer
+  track_gap: 1.0            # ...son tanınan yüzden en fazla bu kadar sonra (sn)
   min_shot: 0.7             # bundan kısa çekimler önceki çekimin kadrajını kullanır (sn)
+  end_shot: 1.5             # klibin son çekimi bundan kısa ve komedyen tanınmıyorsa: kahkaha kesilmiyorsa klip
+                            # önceki çekimin sonunda biter, kesiliyorsa son çekim blur_bg ile gösterilir (sn)
+  tiny_face_ratio: 0.04     # geniş çekimde komedyenin yüzü kare yüksekliğinin bu oranından küçükse "çok uzak"
+  tiny_edge: 0.2            # ...ya da yüzü bu oranın 2 katından küçük ve gövdesi kaynak karenin kenar %20'sindeyse
+  tiny_subject_mode: blur_bg  # çok uzak çekim: blur_bg (kırpmadan, arkası bulanık) | crop
   cutaway_mode: center      # ara çekim: center (sabit merkez kırpma) | blur_bg (yatay kare ortada, arkası bulanık)
   wide_margin: 0.15         # geniş çekim: hareket aralığı kenarlarda bu payla sığıyorsa tek sabit kadraj
   max_speed: 150            # kadraj kayma hızı üst sınırı (px/sn, 1080p kaynak ölçeğinde)

@@ -2,6 +2,8 @@
 gövde merkezi. Her çekim yakın / geniş / ara olarak sınıflanır ve tipine göre kadraj yolu çıkarılır → reframe.json.
 - ara: komedyen güvenilir bulunamıyor (seyirci, mekân) → sabit merkez (ya da cutaway_mode: blur_bg).
 - geniş: gövde merkezinin hareket aralığı sığıyorsa tek sabit kadraj; sığmıyorsa sabit parçalar + yavaş, yumuşak geçiş.
+  Komedyen çok uzaksa (yüz < tiny_face_ratio) ya da uzakça ve kaynak karenin kenarındaysa tiny_subject_mode:
+  blur_bg ile kırpılmadan gösterilir. Son kısa çekimde komedyen yoksa klip kısalır ya da blur_bg (end_shot).
 - yakın: yüz kırpılan alanın orta bandında (center_band) tutulur; kısa hareketler yok sayılır, hız sınırlı."""
 import math
 import subprocess
@@ -113,30 +115,61 @@ def comedian_in(s, ref, W, H, c):
     return (i if sims[i] >= c["face_match"] else None), sims[i]
 
 
+def continued(s, ref, last_face, H, c):
+    """Takip sürekliliği: eşiğin biraz altında (face_match - track_margin) kalan ama çekimde son tanınan yüze
+    konum (bir yüz boyu) ve boyut (0.7–1.4 kat) olarak çok yakın yüz, komedyen sayılır (baş dönünce, ışık
+    değişince düşen benzerlik). Seyirci/tablo uzakta olduğu için etkilenmez. → yüz indeksi | None."""
+    t0, (lx, ly, lw, lh) = last_face
+    if ref is None or s["t"] - t0 > c["track_gap"]:
+        return None
+    best = None
+    for i, f in enumerate(s["faces"]):
+        x, y, w, h = f["box"]
+        sim = float(f["feat"] @ ref)
+        if (h / H >= c["min_face"] and sim >= c["face_match"] - c["track_margin"] and 0.7 <= h / lh <= 1.4
+                and math.hypot(x + w / 2 - lx - lw / 2, y + h / 2 - ly - lh / 2) <= lh
+                and (best is None or sim > best[1])):
+            best = (i, sim)
+    return best and best[0]
+
+
+def prominent(poses):
+    """Sahnedeki tek belirgin kişi: tek pose ya da omuzları ikinciden en az 2 kat geniş olan; yoksa None."""
+    ps = sorted(poses, key=lambda q: -q["width"])
+    if len(ps) == 1 or (len(ps) > 1 and ps[0]["width"] >= 2 * ps[1]["width"]):
+        return ps[0]
+    return None
+
+
 def track(samples, ref, bounds, W, H, c):
     """Her örnekte komedyenin konumu: {"t", "fx" (yüz x | None), "bx" (gövde x), "fh" (yüz yüksekliği oranı),
-    "src": "face"|"pose"} ya da None. Yüz tanınmadıysa sahne bölgesindeki (burun üst %stage_y) ve son bilinen
-    konuma yakın pose kişisi kabul edilir; çekimde hiç konum yoksa omuzları en geniş olan."""
+    "src": "face"|"pose"} ya da None. Yüz tanınmazsa sahne bölgesindeki (burun üst %stage_y) pose kişisi yalnız
+    çekimde daha önce tanınmış komedyenin konumuna yakınsa ya da çekimde hiç tanıma yokken tek belirgin kişiyse
+    kabul edilir; aksi halde örnek boş kalır (tespit oranı düşer → ara çekim)."""
     out = []
     for a, b in zip(bounds, bounds[1:]):
-        last = None
+        last = last_face = None  # son kabul edilen gövde x; son tanınan yüz (t, kutu)
         for s in (s for s in samples if a <= s["t"] < b):
             i, sim = comedian_in(s, ref, W, H, c)
+            s["cont"] = False
+            if i is None and last_face:
+                i = continued(s, ref, last_face, H, c)
+                s["cont"] = i is not None
             s["who"], s["sim"] = i, sim
-            s["pick"] = None
             p = None
             if i is not None:
                 x, y, w, h = s["faces"][i]["box"]
                 fx = x + w / 2
                 body = [q for q in s["poses"] if x <= q["nose_x"] <= x + w]  # yüzün gövdesi
                 p = {"t": s["t"], "fx": fx, "bx": body[0]["x"] if body else fx, "fh": h / H, "src": "face"}
+                last_face = (s["t"], s["faces"][i]["box"])
             else:
                 stage = [q for q in s["poses"] if q["nose_y"] <= c["stage_y"] * H]
-                if last is not None:
-                    stage = [q for q in stage if abs(q["x"] - last) <= c["pose_near"] * W]
-                    q = min(stage, key=lambda q: abs(q["x"] - last), default=None)
+                if last_face is not None:
+                    near = [q for q in stage if abs(q["x"] - last) <= c["pose_near"] * W]
+                    q = min(near, key=lambda q: abs(q["x"] - last), default=None)
                 else:
-                    q = max(stage, key=lambda q: q["width"], default=None)
+                    q = prominent(stage)
                 if q:
                     p = {"t": s["t"], "fx": None, "bx": q["x"], "fh": None, "src": "pose"}
             s["pick"] = p
@@ -273,8 +306,10 @@ def plan_wide(pts, a, b, W, cw, c, H):
 
 
 def shots_from(cuts, pts, checked, dur, W, H, c):
-    """Çekimler: {"t", "type", "keys", "faces"}. checked: örneklenen kare zamanları (tespit oranı için).
-    min_shot'tan kısa çekimler önceki çekimin kadrajını (ve tipini) kullanır."""
+    """Çekimler: {"t", "type", "keys", "faces", "blur"}. checked: örneklenen kare zamanları (tespit oranı için).
+    blur: çekim kırpılmaz, bulanık arka planla gösterilir (ara çekim + cutaway_mode: blur_bg, ya da komedyenin
+    yüzü tiny_face_ratio'dan küçük çok uzak çekim + tiny_subject_mode: blur_bg). min_shot'tan kısa çekimler
+    önceki çekimin kadrajını, tipini ve düzenini kullanır."""
     cw = crop_box([], W, H)["w"]
     center = crop_box([], W, H)["x"]
     bounds = shot_bounds(cuts, dur)
@@ -286,25 +321,33 @@ def shots_from(cuts, pts, checked, dur, W, H, c):
             s["short"] = True
         else:
             kind = classify(sp, sum(a <= t < b for t in checked), W, c)
+            blur = kind == CUTAWAY and c["cutaway_mode"] == "blur_bg"
             if kind == CUTAWAY:
                 keys = [(s["t"], center)]
             elif kind == WIDE:
-                keys = plan_wide(sp, s["t"], b, W, cw, c, H)
+                fh = [p["fh"] for p in sp if p["fh"]]
+                fhm, bxm = (float(np.median(fh)) if fh else 1.0), float(np.median([p["bx"] for p in sp]))
+                edge = min(bxm, W - bxm) < c["tiny_edge"] * W
+                # çok uzak (yüz < tiny_face_ratio) ya da uzakça (< 2 katı) ve kaynak karenin kenarında
+                if fhm < c["tiny_face_ratio"] or (fhm < 2 * c["tiny_face_ratio"] and edge):
+                    s["tiny"] = True  # kırpınca komedyen kaybolur / kenara sıkışır
+                    blur = c["tiny_subject_mode"] == "blur_bg"
+                keys = [(s["t"], center)] if blur else plan_wide(sp, s["t"], b, W, cw, c, H)
             else:
                 face = [(p["t"], p["fx"] if p["fx"] is not None else p["bx"]) for p in sp]
                 keys = follow(face, s["t"], W, cw, c, H)
-            s.update(type=kind, keys=keys)
+            s.update(type=kind, keys=keys, blur=blur)
         shots.append(s)
     for i, s in enumerate(shots):  # kısa çekimler: önceki çekimin son kadrajı (ilk çekimse sonrakinin ilki)
         if s.pop("short", False):
             prev = shots[i - 1] if i else None
             nxt = next((n for n in shots[i + 1:] if "keys" in n), None)
             if prev:
-                s.update(type=prev["type"], keys=[(s["t"], prev["keys"][-1][1])])
+                s.update(type=prev["type"], keys=[(s["t"], prev["keys"][-1][1])], blur=prev["blur"])
             elif nxt:
-                s.update(type=nxt["type"], keys=[(s["t"], nxt["keys"][0][1])])
+                s.update(type=nxt["type"], keys=[(s["t"], nxt["keys"][0][1])], blur=nxt["blur"])
             else:
-                s.update(type=CUTAWAY, keys=[(s["t"], center)])
+                s.update(type=CUTAWAY, keys=[(s["t"], center)], blur=c["cutaway_mode"] == "blur_bg")
         s["x"] = s["keys"][0][1]
     return shots
 
@@ -330,12 +373,12 @@ def shot_at(shots, t):
 
 
 def in_band(samples, shots, cw, band):
-    """Yüz merkezinin kırpılan alanın orta bandında kaldığı örneklerin oranı (ara çekimler hariç).
+    """Yüz merkezinin kırpılan alanın orta bandında kaldığı örneklerin oranı (ara ve kırpılmayan blur çekimler hariç).
     samples: [(t, yüz x)]."""
     ok = n = 0
     for t, fx in samples:
         s = shot_at(shots, t)
-        if s.get("type") == CUTAWAY:
+        if s.get("type") == CUTAWAY or s.get("blur"):
             continue
         n += 1
         ok += abs(fx - x_at(s["keys"], t) - cw / 2) <= band / 2 * cw
@@ -389,13 +432,11 @@ def crop_x_expr(shots):
     return expr
 
 
-def cutaway_ranges(box, dur):
-    """cutaway_mode: blur_bg iken bulanık arka planlı gösterilecek ara çekim aralıkları [(a, b)]."""
-    if box.get("cutaway_mode") != "blur_bg":
-        return []
+def blur_ranges(box, dur):
+    """Bulanık arka planlı (kırpılmadan) gösterilecek çekim aralıkları [(a, b)]; düzen tam çekim sınırında değişir."""
     shots = box["shots"]
     ends = [s["t"] for s in shots[1:]] + [dur]
-    return [(s["t"], e) for s, e in zip(shots, ends) if s.get("type") == CUTAWAY]
+    return [(s["t"], e) for s, e in zip(shots, ends) if s.get("blur")]
 
 
 # ---------- adım ----------
@@ -408,16 +449,42 @@ def detect_cuts(video, start, end, c):
     return [round(a.seconds - start, 3) for a, _ in scenes[1:]]
 
 
-def build(b, samples, ref, cuts, W, H, c):
-    """Bir klibin kadraj kaydı (reframe.json'daki değer)."""
+def end_shot(shots, pts, dur, laughs, c):
+    """Klibin son çekimi end_shot'tan kısaysa ve komedyenin yüzü orada hiç tanınmadıysa (pose tek başına
+    güvenilmez): kahkaha kesilmiyorsa klip önceki çekimin sonunda biter (→ yeni süre), kesiliyorsa son çekim
+    bulanık arka planla gösterilir (→ None). laughs: klip başına göre [(a, b)]."""
+    last = shots[-1]
+    if len(shots) < 2 or dur - last["t"] >= c["end_shot"]:
+        return None
+    if any(p["src"] == "face" and p["t"] >= last["t"] for p in pts):
+        return None
+    if any(a < dur and b > last["t"] for a, b in laughs):
+        last.update(type=CUTAWAY, blur=True, keys=[(last["t"], last["keys"][0][1])], x=last["keys"][0][1])
+        return None
+    shots.pop()
+    return last["t"]
+
+
+def build(b, samples, ref, cuts, W, H, c, laughs=()):
+    """Bir klibin kadraj kaydı (reframe.json'daki değer). "end": klip kısaldıysa yeni süre (klip başına göre)."""
     dur = b["end"] - b["start"]
     pts = track(samples, ref, shot_bounds(cuts, dur), W, H, c)
     shots = shots_from(cuts, pts, [s["t"] for s in samples], dur, W, H, c)
+    end = end_shot(shots, pts, dur, laughs, c)
+    dur = end or dur
     box = crop_box([], W, H)
-    faces = [(p["t"], p["fx"]) for p in pts if p["fx"] is not None]
+    faces = [(p["t"], p["fx"]) for p in pts if p["fx"] is not None and p["t"] < dur]
     return {**box, "shots": shots, "src_w": W, "src_h": H, "faces": len(pts), "checked": len(samples),
-            "cutaway_mode": c["cutaway_mode"], "in_band": in_band(faces, shots, box["w"], c["center_band"]),
+            **({"end": round(end, 3)} if end else {}),
+            "in_band": in_band(faces, shots, box["w"], c["center_band"]),
             "jitter": jitter(shots, dur, H), "jitter_calm": jitter(shots, dur, H, (WIDE, CUTAWAY))}
+
+
+def laughs_of(video, b):
+    """Klibe denk gelen kahkahalar (klip başına göre sn)."""
+    p = work_dir(video) / "laughter.json"
+    return [(x["start"] - b["start"], x["end"] - b["start"]) for x in (read_json(p) if p.exists() else [])
+            if x["end"] > b["start"] and x["start"] < b["end"]]
 
 
 def run(video, cfg, force=False):
@@ -438,7 +505,9 @@ def run(video, cfg, force=False):
             log.warning("Komedyenin yüzü hiçbir klipte bulunamadı; yalnız pose ile takip edilecek")
         for b in bits:
             samples, W, H, cuts = data[b["n"]]
-            r = build(b, samples, ref, cuts, W, H, c)
+            r = build(b, samples, ref, cuts, W, H, c, laughs_of(video, b))
+            if "end" in r:
+                log.info("Bit #%d: son çekimde komedyen yok, kahkaha kesilmiyor → klip %.2f sn'de bitiyor", b["n"], r["end"])
             kinds = [s["type"] for s in r["shots"]]
             j, jc = r["jitter"], r["jitter_calm"]
             log.info("Bit #%d: %d/%d karede komedyen, çekimler %s | titreme %.0f px/sn, %.2f yön/3sn "
@@ -469,7 +538,7 @@ def debug(video, cfg, n):
         det.close()
     ref = np.array(saved["_ref"]) if saved.get("_ref") else reference(samples, H, c)
     cuts = detect_cuts(video, b["start"], b["end"], c)
-    r = build(b, samples, ref, cuts, W, H, c)
+    r = build(b, samples, ref, cuts, W, H, c, laughs_of(video, b))
     out = ROOT / "work" / "debug" / f"{wd.name}_{n}.mp4"
     out.parent.mkdir(parents=True, exist_ok=True)
     ow, oh = 960, int(960 * H / W) // 2 * 2
@@ -496,13 +565,16 @@ def debug(video, cfg, n):
             sim = float(f["feat"] @ ref) if ref is not None else 0.0
             col = (0, 220, 0) if i == s.get("who") else (0, 0, 230)
             cv2.rectangle(img, (P(x), P(y)), (P(x + w), P(y + h)), col, 2)
-            cv2.putText(img, f"{sim:.2f}", (P(x), P(y) - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.45, col, 1, cv2.LINE_AA)
+            mark = " (takip)" if i == s.get("who") and s.get("cont") else ""
+            cv2.putText(img, f"{sim:.2f}{mark}", (P(x), P(y) - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.45, col, 1, cv2.LINE_AA)
         p = s.get("pick")
         if p and p["src"] == "pose":
             cv2.circle(img, (P(p["bx"]), oh // 2), 8, (255, 140, 0), -1)
-        cx = x_at(shot["keys"], t)
-        cv2.rectangle(img, (P(cx), P(r["y"])), (P(cx + r["w"]), P(r["y"] + r["h"])), (0, 220, 255), 3)
-        label = f"{t:5.1f} sn  {shot['type']}" + ("  (blur_bg)" if shot["type"] == CUTAWAY and r["cutaway_mode"] == "blur_bg" else "")
+        if not shot.get("blur"):  # blur çekimde kırpma yok: kare olduğu gibi (ortada) gösterilir
+            cx = x_at(shot["keys"], t)
+            cv2.rectangle(img, (P(cx), P(r["y"])), (P(cx + r["w"]), P(r["y"] + r["h"])), (0, 220, 255), 3)
+        label = (f"{t:5.1f} sn  {shot['type']}" + ("  (uzak)" if shot.get("tiny") else "")
+                 + ("  [blur_bg]" if shot.get("blur") else "") + ("  [klip burada biter]" if t >= r.get("end", 1e9) else ""))
         cv2.putText(img, label, (12, 34), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 5, cv2.LINE_AA)
         cv2.putText(img, label, (12, 34), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2, cv2.LINE_AA)
         ff.stdin.write(img.tobytes())

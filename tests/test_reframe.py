@@ -44,12 +44,13 @@ def test_reference_and_track_reject_audience_and_painting():
     assert s["who"] == 2 and pts[0]["fx"] == 300 and pts[0]["bx"] == 310  # gövde merkezi pose'tan
 
 
-def test_track_pose_only_in_stage_and_near_last():
+def test_track_pose_after_recognized_face_must_stay_near():
     ref = unit([1, 0, 0])
+    face = {"box": [850, 200, 100, 100], "score": 0.9, "feat": ref}
     pose = lambda x, ny=300, w=80: {"x": x, "nose_x": x, "nose_y": ny, "width": w}
-    samples = [{"t": 0.0, "faces": [], "poses": [pose(900), pose(400, ny=900, w=200)]},  # alttaki seyirci elenir
-               {"t": 0.2, "faces": [], "poses": [pose(930), pose(1600)]},               # yakındaki seçilir
-               {"t": 0.4, "faces": [], "poses": [pose(1600)]}]                           # uzak zıplama reddedilir
+    samples = [{"t": 0.0, "faces": [face], "poses": [pose(900)]},                         # tanınan yüz
+               {"t": 0.2, "faces": [], "poses": [pose(930), pose(400, ny=900, w=200)]},  # alttaki seyirci elenir
+               {"t": 0.4, "faces": [], "poses": [pose(1600, w=300)]}]                    # tek ama uzak: reddedilir
     pts = reframe.track(samples, ref, [0, 1], W, H, C)
     assert [p["bx"] for p in pts] == [900, 930]
 
@@ -118,6 +119,8 @@ def test_short_shot_uses_previous_framing_and_cutaway_is_center():
 def test_in_band_excludes_cutaways_and_jitter_counts_direction_changes():
     shots = [{"t": 0.0, "type": reframe.CLOSE, "keys": [(0.0, 600)]}, {"t": 5.0, "type": reframe.CUTAWAY, "keys": [(5.0, 0)]}]
     assert reframe.in_band([(1.0, 903.0), (6.0, 1800.0)], shots, CW, 0.4) == 1.0
+    blur = [{**shots[0], "blur": True}, shots[1]]
+    assert reframe.in_band([(1.0, 1800.0)], blur, CW, 0.4) is None  # kırpılmayan çekim sayılmaz
     zig = [{"t": 0.0, "keys": [(0.0, 0), (1.0, 100), (2.0, 0), (3.0, 100)]}]
     j = reframe.jitter(zig, 3.0, H)
     assert j["speed"] == pytest.approx(100, rel=0.05) and j["dir_per_3s"] == pytest.approx(2, abs=0.01)
@@ -133,12 +136,61 @@ def test_crop_x_expr_linear_and_ease():
     assert x_at([(0, 100), (2, 100), (4, 300, 1)], 2.5) < 150  # ease in: yavaş başlar
 
 
-def test_cutaway_blur_bg_filter():
-    box = {**reframe.crop_box([], W, H), "cutaway_mode": "blur_bg",
-           "shots": [{"t": 0.0, "type": reframe.WIDE, "keys": [(0.0, 300)]}, {"t": 5.0, "type": reframe.CUTAWAY, "keys": [(5.0, 656)]}]}
+def test_blur_shots_switch_layout_exactly_at_shot_bounds():
+    shots = [{"t": 0.0, "type": reframe.WIDE, "keys": [(0.0, 300)], "blur": False},
+             {"t": 5.0, "type": reframe.CUTAWAY, "keys": [(5.0, 656)], "blur": True},
+             {"t": 7.5, "type": reframe.CLOSE, "keys": [(7.5, 600)], "blur": False}]
+    box = {**reframe.crop_box([], W, H), "shots": shots}
     f = render.layout_filter("crop", box, 9.0)
-    assert "overlay=enable='between(t,5.0,9.0)'" in f and "gblur" in f
-    assert "gblur" not in render.layout_filter("crop", {**box, "cutaway_mode": "center"}, 9.0)
+    assert "overlay=enable='gte(t,5.0)*lt(t,7.5)'" in f and "gblur" in f
+    assert "gblur" not in render.layout_filter("crop", {**box, "shots": [{**s, "blur": False} for s in shots]}, 9.0)
+
+
+def test_tiny_subject_shot_uses_blur_bg_and_mode_crop_keeps_crop():
+    tiny = [P(t, 300.0, 300.0, 0.03) for t in np.arange(0, 5, 0.2)]
+    s = reframe.shots_from([], tiny, list(np.arange(0, 5, 0.2)), 5.0, W, H, C)[0]
+    assert s["type"] == reframe.WIDE and s["tiny"] and s["blur"]
+    s = reframe.shots_from([], tiny, list(np.arange(0, 5, 0.2)), 5.0, W, H, {**C, "tiny_subject_mode": "crop"})[0]
+    assert s["tiny"] and not s["blur"]
+    shot = lambda x, fh: reframe.shots_from([], [P(t, x, x, fh) for t in np.arange(0, 5, 0.2)],
+                                            list(np.arange(0, 5, 0.2)), 5.0, W, H, C)[0]
+    assert shot(300.0, 0.047)["blur"]       # Joe #5 51–60 sn: uzakça ve sol kenarda
+    assert not shot(960.0, 0.047)["blur"]   # Joe #5 0–11 sn: aynı boyut ama ortada
+    assert not shot(1560.0, 0.099)["blur"]  # kenarda ama yakın (81–84 sn, arkadan)
+
+
+def test_continuity_accepts_own_face_below_threshold_but_not_audience():
+    ref = unit([1, 0, 0])
+    near = unit([0.3, 1, 0])  # ref ile benzerlik ≈ 0.29: eşiğin (0.363) altında, eşik-0.1'in üstünde
+    face = lambda x, h, f: {"box": [x - h / 2, 200, h, h], "score": 0.9, "feat": f}
+    samples = [{"t": 0.0, "faces": [face(900, 300, ref)], "poses": []},
+               {"t": 0.2, "faces": [face(930, 310, near), face(1600, 300, near)], "poses": []},  # kendi yüzü + uzaktaki
+               {"t": 0.4, "faces": [face(1600, 300, near)], "poses": []}]                        # yalnız uzaktaki
+    pts = reframe.track(samples, ref, [0, 1], W, H, C)
+    assert samples[1]["who"] == 0 and samples[1]["cont"] and samples[2]["who"] is None
+    assert [p["fx"] for p in pts] == [900, 930]
+
+
+def test_pose_without_recognized_face_needs_single_prominent_person():
+    ref = unit([1, 0, 0])
+    pose = lambda x, w=80: {"x": x, "nose_x": x, "nose_y": 300, "width": w}
+    two = [{"t": i * 0.2, "faces": [], "poses": [pose(500), pose(1400, 70)]} for i in range(5)]
+    assert reframe.track(two, ref, [0, 1], W, H, C) == []  # iki benzer kişi: kimse kabul edilmez
+    one_big = [{"t": i * 0.2, "faces": [], "poses": [pose(500, 200), pose(1400, 60)]} for i in range(5)]
+    assert {p["bx"] for p in reframe.track(one_big, ref, [0, 1], W, H, C)} == {500}
+
+
+def test_short_last_shot_without_comedian_trims_or_blurs():
+    shots = lambda: [{"t": 0.0, "type": reframe.CLOSE, "keys": [(0.0, 600)], "blur": False, "x": 600},
+                     {"t": 9.3, "type": reframe.CLOSE, "keys": [(9.3, 600)], "blur": False, "x": 600}]
+    pts = [P(t, 900.0, 900.0, 0.3) for t in np.arange(0, 9.3, 0.2)] + [P(9.5, 400.0)]  # sonda yalnız pose
+    s = shots()
+    assert reframe.end_shot(s, pts, 10.0, [(5.0, 9.0)], C) == 9.3 and len(s) == 1  # kahkaha bitmiş → kes
+    s = shots()
+    assert reframe.end_shot(s, pts, 10.0, [(8.0, 12.0)], C) is None  # kahkaha sürüyor → blur_bg
+    assert s[-1]["blur"] and s[-1]["type"] == reframe.CUTAWAY
+    s = shots()
+    assert reframe.end_shot(s, pts + [P(9.7, 900.0, 900.0, 0.3)], 10.0, [], C) is None and not s[-1]["blur"]
 
 
 def test_body_of_uses_shoulders_and_hips():

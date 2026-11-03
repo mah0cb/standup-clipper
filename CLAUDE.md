@@ -48,7 +48,7 @@ python main.py step reframe-debug <video> <klip_no>   # kadraj hata ayıklama vi
 ## Önemli config
 `render.layout`, `upscale.mode/tile/keep_frames`, `laughter.threshold` (0.4), `laughter.stride` (GPU'da 1),
 `select.per_minutes/max_bits/min_score`, `candidates.max_len` (90), `subs.size/note_size/credit_y`, `safe_zone` (altyazı+not y 1050–1450, sol 60 / sağ 140 px),
-`reframe.face_match/min_face/close_face/min_detect_rate/max_jump/cutaway_mode/wide_margin/max_speed/dir_hold/min_move/center_band`, `censor.enabled/mode (full|first_letter)/include_mild`, `claude.mode` (cli = `claude -p`, abonelik | api), `claude.model`.
+`reframe.face_match/min_face/close_face/min_detect_rate/max_jump/cutaway_mode/tiny_face_ratio/tiny_edge/tiny_subject_mode/track_margin/end_shot/wide_margin/max_speed/dir_hold/min_move/center_band`, `censor.enabled/mode (full|first_letter)/include_mild`, `claude.mode` (cli = `claude -p`, abonelik | api), `claude.model`.
 
 ## Alınan kararlar
 - Claude çağrıları `claude_client.ask_json`: JSON şema doğrulama + 2 yeniden deneme; cli modunda boş geçici
@@ -57,9 +57,16 @@ python main.py step reframe-debug <video> <klip_no>   # kadraj hata ayıklama vi
 - torch CUDA 13.2 derlemesi (2.15 için cu128 yok). Whisper (ctranslate2) pip'ten gelen cuBLAS/cuDNN 12 DLL'lerini kullanır.
 - Kadraj "kameraman" gibi: yalnız komedyen. Referans yüz = tüm kliplerin yakın çekim yüzlerinin (SFace) en kalabalık
   benzerlik kümesi (`reframe.json` → `_ref`). Eşik altı yüzler (seyirci, tablo) ve `min_face`'ten küçük yüzler (uzak
-  seyircinin vektörü güvenilmez, 0.36–0.39 ile yanlış eşleşiyordu) yok sayılır. Yüz tanınmazsa sahne bölgesindeki
-  (burun üst %60) ve son konuma yakın pose kişisi. Çekim içinde 3 sn kayan medyandan sapan tekil konumlar atılır.
-- Çekim tipi: ara (tespit < %50 ya da zıplıyor) → sabit merkez | `cutaway_mode: blur_bg` (render'da overlay enable);
+  seyircinin vektörü güvenilmez, 0.36–0.39 ile yanlış eşleşiyordu) yok sayılır. Takip sürekliliği: çekimde son
+  tanınan yüze konum (bir yüz boyu) ve boyutça (0.7–1.4 kat) yakın yüz `face_match - track_margin` ile kabul (baş
+  dönünce düşen benzerlik). Yüz tanınmazsa sahne bölgesindeki (burun üst %60) pose kişisi yalnız çekimde tanınmış
+  komedyene yakınsa ya da çekimde tanıma yokken tek belirgin kişiyse (tek pose / omuzları 2 kat geniş).
+  Çekim içinde 3 sn kayan medyandan sapan tekil konumlar atılır.
+- `blur` işaretli çekimler kırpılmaz (render: `overlay=enable='gte(t,a)*lt(t,b)'`, düzen tam çekim sınırında değişir):
+  ara + `cutaway_mode: blur_bg`; geniş ve yüz < `tiny_face_ratio` (%4) ya da < %8 ve gövde kaynak karenin kenar
+  %20'sinde (`tiny_edge`; Joe #5 51–60 sn yüzü %4.7, 0–11 sn ile aynı boyut, fark konum). Son çekim < `end_shot`
+  (1.5 sn) ve orada yüz tanınmadıysa: kahkaha kesilmiyorsa `reframe.json` → `end` (render klibi kısaltır), kesiliyorsa blur.
+- Çekim tipi: ara (tespit < %50 ya da zıplıyor) → sabit merkez | `cutaway_mode: blur_bg`;
   geniş → gövde (omuz-kalça) aralığı sığıyorsa tek sabit kadraj, yoksa sabit parçalar + cos ease geçiş (≤150 px/sn,
   yön değişimi öncesi 2 sn); yakın → orta %40 ölü bölge + 3 sn kayan medyan (1.5 sn'den kısa hareket yok) + hız sınırı
   (ileri/geri ortalamalı, gecikmesiz). 0.7 sn'den kısa çekim önceki kadrajı kullanır. Anahtar `[t, x, 1]` = ease.
@@ -86,7 +93,7 @@ python main.py step reframe-debug <video> <klip_no>   # kadraj hata ayıklama vi
 ## Bilinen sorunlar
 - Upscale yavaş: RTX 4060'ta ~7.9 kare/sn (85 sn'lik klip ≈ 5.3 dk toplam), geçici kareler birkaç GB.
 - Komedyen kaynak karenin kenarındaysa crop daha öteye kayamaz; orta %40 kuralı orada sağlanamaz.
-- Komedyen arkadan/profilden görünüyorsa yüz tanınmaz; pose ile takip edilir. Upscale yolunda blur_bg ara çekim uygulanmaz.
+- Komedyen arkadan/profilden görünüyorsa yüz tanınmaz; pose ile takip edilir. Upscale yolunda blur işaretli çekimler uygulanmaz.
 - Komedyen adı (y≈470) ilk 3 sn yakın çekimlerde başın üstüne denk gelebilir.
 - Whisper bazen kahkaha altındaki konuşmayı atlar; gapfill kısmen kurtarır.
 - `claude -p` kullanım limitine takılırsa adım hata verir; limit sıfırlanınca aynı komut cache'ten devam eder.

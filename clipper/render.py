@@ -16,16 +16,16 @@ BLUR_BG = ("split[a][b];[a]scale=270:480:force_original_aspect_ratio=increase,cr
 
 
 def layout_filter(layout, box, dur=None):
-    """Tek giriş/tek çıkışlı filtre zinciri (altyazı hariç). crop düzeninde ara çekimler (cutaway_mode: blur_bg)
-    bulanık arka planlı sürümle örtülür."""
+    """Tek giriş/tek çıkışlı filtre zinciri (altyazı hariç). crop düzeninde "blur" işaretli çekimler (ara çekim,
+    çok uzak komedyen) bulanık arka planlı sürümle örtülür."""
     if layout == "blur_bg":
         # Arka plan: küçült → bulanıklaştır → büyüt (doğrudan 1080x1920'de bulanıklaştırmaktan çok daha hızlı)
         return BLUR_BG
     crop = f"{crop_filter(box)},{SCALE}"
-    cuts = reframe.cutaway_ranges(box, dur) if dur else []
+    cuts = reframe.blur_ranges(box, dur) if dur else []
     if not cuts:
         return crop
-    on = "+".join(f"between(t,{a},{b})" for a, b in cuts)
+    on = "+".join(f"gte(t,{a})*lt(t,{b})" for a, b in cuts)  # tam çekim sınırında (bitiş hariç)
     return f"split[cm][bm];[cm]{crop}[cv];[bm]{BLUR_BG}[bv];[cv][bv]overlay=enable='{on}'"
 
 
@@ -62,7 +62,7 @@ def should_upscale(mode, layout, crop_h):
 
 def upscale_frames(video, bit, box, fdir, cfg):
     """Kes + kırp → kareler → Real-ESRGAN (x4). Büyütülmüş karelerin klasörünü döndürür."""
-    # ponytail: cutaway_mode blur_bg burada uygulanmaz (ara çekim merkez kırpılır); gerekirse kareler üstünde overlay
+    # ponytail: blur işaretli çekimler burada uygulanmaz (merkez kırpılır); gerekirse kareler üstünde overlay
     u = cfg["upscale"]
     src, dst = fdir / "in", fdir / "out"
     shutil.rmtree(fdir, ignore_errors=True)
@@ -118,6 +118,8 @@ def run(video, cfg, force=True, layout=None, upscale=None, only=None, out_dir=No
     od.mkdir(parents=True, exist_ok=True)
     outs = []
     for b in bits:
+        if "end" in boxes[str(b["n"])]:  # kadraj: son çekimde komedyen yok → klip önceki çekimin sonunda biter
+            b = {**b, "end": b["start"] + boxes[str(b["n"])]["end"]}
         out = od / f"{b['n']}_{slug(b['hook_tr'], 40)}{suffix}.mp4"
         up = render_bit(video, b, boxes[str(b["n"])], subs[b["n"]].relative_to(ROOT).as_posix(), out, layout, mode, cfg)
         out.with_suffix(".txt").write_text(captions.txt_text(wd.name, b["n"], caps.get(str(b["n"]), ""), cfg),
