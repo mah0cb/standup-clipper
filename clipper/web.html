@@ -43,6 +43,7 @@
   .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:14px; }
   .grid video { width:100%; aspect-ratio:9/16; background:#000; border-radius:8px; }
   .grid textarea { width:100%; height:110px; font-size:13px; }
+  h3.vgroup { margin:18px 0 8px; font-size:16px; }
   .hook { width:100%; font:600 16px system-ui; margin:6px 0; }
   .err { border:1px solid var(--bad); background:#ef444418; border-radius:8px; padding:10px; margin:10px 0; }
   label { cursor:pointer; }
@@ -341,16 +342,29 @@ async function outputsPage(filter) {
   const app = view;
   const [items, vids] = await Promise.all([api("/api/outputs"), api("/api/videos")]);
   const stem = n => n.replace(/\.[^.]+$/, "");
-  const capVid = $("select", { id: "cap-video" }, ...vids.filter(v => v.outputs && (!filter || stem(v.name) === filter))
-    .map(v => $("option", { value: v.name, textContent: stem(v.name) })));
+  const byStem = Object.fromEntries(vids.map(v => [stem(v.name), v]));
+  const title = s => byStem[s] ? [byStem[s].comedian, byStem[s].show].filter(Boolean).join(" – ") : s;
+  // Seçimler sayfa yenilense de kalır (localStorage yoksa varsayılanlar)
+  const load = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  const keep = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* gizli pencere vb. */ } };
+  const CAP_TITLE = "Claude açıklamaları yeniden yazar; yalnız .txt dosyaları güncellenir, video render edilmez";
+  const dirs = [...new Set(items.map(o => o.video))];
+  const vidSel = $("select", { id: "out-video" }, $("option", { value: "", textContent: "Tüm videolar" }),
+    ...dirs.map(s => $("option", { value: s, textContent: title(s) })));
+  vidSel.value = filter ?? load("out.video") ?? "";
+  if (vidSel.selectedIndex < 0) vidSel.value = "";  // artık çıktısı olmayan video → tümü
+  const shareSel = $("select", { id: "out-share" }, ...[["all", "Hepsi"], ["unshared", "Paylaşılmamış"], ["shared", "Paylaşılmış"]]
+    .map(([v, t]) => $("option", { value: v, textContent: t })));
+  shareSel.value = load("out.share") || "all";
+  if (shareSel.selectedIndex < 0) shareSel.value = "all";
   const capMsg = $("span", { className: "mut" });
-  const capBtn = $("button", { id: "recaption", className: "sec", textContent: "Açıklamaları yeniden yaz", disabled: !capVid.options.length,
-    title: "Claude açıklamaları yeniden yazar; yalnız .txt dosyaları güncellenir, video render edilmez", onclick: async () => {
-      try { const j = await api(`/api/videos/${enc(capVid.value)}/captions`, { method: "POST" }); location.hash = "#/job/" + j.id; }
+  const capBtn = $("button", { id: "recaption", className: "sec", textContent: "Açıklamaları yeniden yaz", onclick: async () => {
+      const v = byStem[vidSel.value];
+      try { const j = await api(`/api/videos/${enc(v.name)}/captions`, { method: "POST" }); location.hash = "#/job/" + j.id; }
       catch (e) { capMsg.textContent = "Hata: " + e.message; } } });
-  const only = $("input", { type: "checkbox", id: "unshared" });
-  const grid = $("div", { className: "grid" });
-  const draw = () => grid.replaceChildren(...items.filter(o => (!filter || o.video === filter) && (!only.checked || !Object.keys(o.shares).length)).map(o => {
+  const grid = o => $("div", { className: "grid" }, ...o.map(card));
+  const list = $("div");
+  function card(o) {
     const shares = $("div", { className: "row" }, ...["youtube", "instagram", "tiktok"].map(p => {
       const cb = $("input", { type: "checkbox", className: "share-" + p, checked: !!o.shares[p] });
       cb.onchange = async () => { o.shares = { ...o.shares, ...(await api("/api/outputs/share", { method: "POST", body: { path: o.path, platform: p, done: cb.checked } })) }; if (!cb.checked) delete o.shares[p]; draw(); };
@@ -365,11 +379,24 @@ async function outputsPage(filter) {
         $("button", { className: "copy sec", textContent: "Kopyala", onclick: async e => { await navigator.clipboard.writeText(o.text); e.target.textContent = "Kopyalandı"; } }),
         $("button", { className: "reveal sec", textContent: "Klasörde göster", onclick: () => api("/api/outputs/reveal", { method: "POST", body: { path: o.path } }) })),
       shares);
-  }));
-  only.onchange = draw;
-  app.append($("div", { className: "card row" }, $("strong", { textContent: filter ? `Çıktılar: ${filter}` : "Tüm çıktılar" }),
-    filter ? $("a", { href: "#/outputs", textContent: "tümünü göster", className: "mut" }) : null,
-    $("label", { className: "mut" }, only, " Henüz paylaşılmamış"), $("span", { style: "margin-left:auto" }), capVid, capBtn, capMsg), grid);
+  }
+  function draw() {
+    const v = vidSel.value, sh = shareSel.value;
+    keep("out.video", v); keep("out.share", sh);
+    history.replaceState(null, "", "#/outputs" + (v ? "/" + enc(v) : ""));  // hashchange tetiklemez
+    capBtn.disabled = !byStem[v];  // "Tüm videolar" seçiliyken pasif
+    capBtn.title = v ? CAP_TITLE : "Önce bir video seçin";
+    const shown = items.filter(o => (!v || o.video === v) &&
+      (sh === "all" || (sh === "shared") === Object.keys(o.shares).length > 0));
+    if (v) return list.replaceChildren(shown.length ? grid(shown) : $("div", { className: "mut", textContent: "Bu filtreye uyan klip yok." }));
+    const groups = dirs.map(d => [d, shown.filter(o => o.video === d)]).filter(([, os]) => os.length);
+    list.replaceChildren(...groups.map(([d, os]) => $("section", {},
+      $("h3", { className: "vgroup", textContent: `${title(d)} · ${os.length} klip` }), grid(os))),
+      ...(groups.length ? [] : [$("div", { className: "mut", textContent: "Bu filtreye uyan klip yok." })]));
+  }
+  vidSel.onchange = shareSel.onchange = draw;
+  app.append($("div", { className: "card row" }, $("strong", { textContent: "Çıktılar" }), vidSel, shareSel,
+    $("span", { style: "margin-left:auto" }), capBtn, capMsg), list);
   draw();
 }
 
