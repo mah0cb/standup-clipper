@@ -110,7 +110,8 @@ def run(video, cfg, force=True, layout=None, upscale=None, only=None, out_dir=No
     for b in bits:
         out = od / f"{b['n']}_{slug(b['hook_tr'], 40)}{suffix}.mp4"
         up = render_bit(video, b, boxes[str(b["n"])], subs[b["n"]].relative_to(ROOT).as_posix(), out, layout, mode, cfg)
-        out.with_suffix(".txt").write_text(caps.get(str(b["n"]), "") + "\n", encoding="utf-8")
+        out.with_suffix(".txt").write_text(captions.txt_text(wd.name, b["n"], caps.get(str(b["n"]), ""), cfg),
+                                           encoding="utf-8")
         log.info("Render edildi (%s%s): %s", layout, ", upscale %.0f sn" % up if up else "", out)
         outs.append(out)
     return outs

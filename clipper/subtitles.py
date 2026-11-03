@@ -1,5 +1,5 @@
 """7) 1080x1920 karaoke ASS altyazı üretir → work/{video}/subs/{n}.ass."""
-from . import proofread, select_llm
+from . import censor, proofread, select_llm
 from .common import ROOT, read_json, video_info, work_dir
 
 FONTS_DIR = ROOT / "fonts"
@@ -62,10 +62,10 @@ def main_position(layout, src_w, src_h, s, z):
     return 2, 1920 - z["text_bottom"]
 
 
-def build_ass(bit, tr, comedian, s, z, main_align=2, margin_v=None):
+def build_ass(bit, tr, comedian, s, z, main_align=2, margin_v=None, cen=lambda t: t):
     """z: güvenli alan (config safe_zone). Altyazı ve notlar text_top–text_bottom bandında, yatayda left/right
     boşluklu; hook üstte, komedyen adı hook'un hemen altında ve onunla birlikte kaybolur (hook alttan hizalı,
-    uzunsa yukarı doğru büyür)."""
+    uzunsa yukarı doğru büyür). cen: sansür (metin → aynı uzunlukta metin, karaoke zamanı değişmez)."""
     t0, dur = bit["start"], bit["end"] - bit["start"]
     hook_end = ts(min(s["hook_secs"], dur))
     font = font_name(s)
@@ -75,13 +75,13 @@ def build_ass(bit, tr, comedian, s, z, main_align=2, margin_v=None):
                          hook_margin_v=1920 - s["credit_y"] + s["credit_gap"],
                          **{k: s[k] for k in ("size", "primary", "outline", "hook_size", "credit_size", "credit_color",
                                               "credit_y", "note_size")})
-    ev = [f"Dialogue: 1,{ts(0)},{hook_end},Hook,,0,0,0,,{{\\fad(150,300)}}{esc(bit['hook_tr'])}"]
+    ev = [f"Dialogue: 1,{ts(0)},{hook_end},Hook,,0,0,0,,{{\\fad(150,300)}}{esc(cen(bit['hook_tr']))}"]
     if comedian:
         ev.append(f"Dialogue: 0,{ts(0)},{hook_end},Credit,,0,0,0,,{{\\fad(150,300)}}{esc(comedian)}")
     for nt in tr.get("notes", []):
         st = nt["start"] - t0
         ev.append(f"Dialogue: 1,{ts(st)},{ts(min(st + s['note_secs'], dur))},Note,,0,0,0,,"
-                  f"{{\\fad(150,200)}}{esc(nt['text'])}")
+                  f"{{\\fad(150,200)}}{esc(cen(nt['text']))}")
     groups = tr["groups"]
     for i, g in enumerate(groups):
         start, end = g["start"] - t0, g["end"] - t0
@@ -91,7 +91,7 @@ def build_ass(bit, tr, comedian, s, z, main_align=2, margin_v=None):
         if show_end <= max(start, 0):
             continue
         ev.append(f"Dialogue: 0,{ts(start)},{ts(show_end)},Main,,0,0,0,,"
-                  f"{karaoke(g['lines'], int(round((end - start) * 100)))}")
+                  f"{karaoke([cen(l) for l in g['lines']], int(round((end - start) * 100)))}")
     return head + "\n".join(ev) + "\n"
 
 
@@ -108,6 +108,7 @@ def run(video, cfg, force=True, layout="crop"):
     for b in bits:
         p = wd / "subs" / f"{b['n']}.ass"
         p.parent.mkdir(exist_ok=True)
-        p.write_text(build_ass(b, trs[str(b["n"])], meta.get("comedian", ""), cfg["subs"], z, align, margin), encoding="utf-8")
+        p.write_text(build_ass(b, trs[str(b["n"])], meta.get("comedian", ""), cfg["subs"], z, align, margin,
+                                cen=censor.for_bit(wd, b["n"], cfg)), encoding="utf-8")
         paths[b["n"]] = p
     return paths

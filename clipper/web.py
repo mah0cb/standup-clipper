@@ -17,6 +17,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+from . import censor
 from . import review as review_mod
 from .common import ROOT, load_config, read_json, slug, video_meta, work_dir, write_json
 from .jobs import FINAL, JobQueue
@@ -42,6 +43,9 @@ SETTINGS = {
     "subs.note_size": int,
     "claude.mode": ["cli", "api"],
     "claude.model": str,
+    "censor.enabled": bool,
+    "censor.mode": ["full", "first_letter"],
+    "censor.include_mild": bool,
 }
 
 _probe_cache = {}
@@ -162,6 +166,10 @@ def write_settings(values):
             if v not in kind:
                 raise HTTPException(400, f"{path}: {kind} değerlerinden biri olmalı")
             v = DoubleQuotedScalarString(v)  # çıplak off, PyYAML'da False okunur
+        elif kind is bool:
+            if str(v).lower() not in ("true", "false"):
+                raise HTTPException(400, f"{path}: true/false olmalı")
+            v = str(v).lower() == "true"
         else:
             try:
                 v = kind(v)
@@ -188,9 +196,17 @@ class ReviewBody(BaseModel):
     hooks: dict[str, str] = {}
     lines: dict[str, list[list[str]]] = {}
     captions: dict[str, str] = {}
+    censor: dict[str, dict[str, list[str]]] | None = None  # {n: {add: [], remove: []}}
     render: bool = False
     layout: str | None = None
     upscale: str | None = None
+
+
+class CensorBody(BaseModel):
+    n: int
+    texts: list[str]
+    add: list[str] = []
+    remove: list[str] = []
 
 
 class MetaBody(BaseModel):
@@ -323,11 +339,21 @@ def create_app(queue=None, start_worker=True, open_url=None):
         subs = load_config()["subs"]
         return {**review_mod.load(wd), "max_chars": subs["max_chars"], "note_secs": subs["note_secs"]}
 
+    @app.post("/api/videos/{name}/censor")
+    def censor_preview(name: str, body: CensorBody):
+        """Onay sayfası: metinlerin videoya basılacak (sansürlü) hâli + sansürlenen kelimeler."""
+        wd = work_dir(sample_path(name))
+        tr = read_json(wd / review_mod.TR_FILE).get(str(body.n), {}) if (wd / review_mod.TR_FILE).exists() else {}
+        extra, allow = censor.overrides(tr, {"censor": {str(body.n): body.model_dump()}}, body.n)
+        c = load_config()["censor"]
+        return {"texts": [censor.apply(t, c, extra, allow) for t in body.texts],
+                "words": censor.found(body.texts, c, extra, allow)}
+
     @app.post("/api/videos/{name}/review")
     def review_save(name: str, body: ReviewBody):
         wd = work_dir(sample_path(name))
         try:
-            review_mod.save(wd, body.model_dump(include={"approved", "hooks", "lines", "captions"}))
+            review_mod.save(wd, body.model_dump(include={"approved", "hooks", "lines", "captions", "censor"}, exclude_none=True))
         except ValueError as e:
             raise HTTPException(400, str(e))
         job = queue.add(name, "render", {"layout": body.layout, "upscale": body.upscale}) if body.render else None

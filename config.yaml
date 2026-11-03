@@ -104,3 +104,8 @@ claude:
   parallel: 4               # çeviri çağrıları aynı anda kaç tane
   price_in: 4.0             # $ / 1M girdi token (api modu maliyet logu)
   price_out: 20.0           # $ / 1M çıktı token
+
+censor:                     # küfür sansürü: yalnız çıktıya (altyazı, not, hook, .txt); çeviri JSON'ları değişmez
+  enabled: true
+  mode: "full"              # full ("******") | first_letter ("s*****")
+  include_mild: false       # bok, lanet, kahrolası da sansürlensin mi (config/censor_tr.txt [mild])

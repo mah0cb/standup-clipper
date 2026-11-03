@@ -3,9 +3,9 @@
 Mevcut out/ kliplerinin .txt dosyaları da güncellenir (video yeniden render edilmez)."""
 import re
 
-from . import proofread, select_llm
+from . import censor, proofread, select_llm
 from .claude_client import ask_json
-from .common import ROOT, cached, video_meta, work_dir
+from .common import ROOT, cached, load_config, video_meta, work_dir
 
 SYSTEM = """Sen Türk izleyici için stand-up kısa videolarına (Reels/TikTok/Shorts) paylaşım açıklaması yazan bir editörsün.
 Her klip için iki şey yazarsın:
@@ -103,12 +103,18 @@ def clip_block(b, tr):
     return f'== n={b["n"]} | ekrandaki hook başlığı: "{b["hook_tr"]}"\nEN: {en}\nTR: {tr_text}'
 
 
-def write_txts(name, caps):
+def txt_text(name, n, text, cfg):
+    """.txt'ye yazılacak açıklama: captions.json orijinal kalır, sansür yalnız burada uygulanır."""
+    return censor.for_bit(ROOT / "work" / name, n, cfg)(text) + "\n"
+
+
+def write_txts(name, caps, cfg=None):
     """out/ içindeki mevcut kliplerin .txt açıklamalarını günceller."""
+    cfg = cfg or load_config()
     od = ROOT / "out" / name
     for n, text in caps.items():
         for mp4 in od.glob(f"{n}_*.mp4"):
-            mp4.with_suffix(".txt").write_text(text + "\n", encoding="utf-8")
+            mp4.with_suffix(".txt").write_text(txt_text(name, n, text, cfg), encoding="utf-8")
 
 
 def run(video, cfg, force=False):
@@ -124,5 +130,5 @@ def run(video, cfg, force=False):
         return {str(c["n"]): compose(c["hook"], comedian, show, c["topic"]) for c in d["captions"]}
 
     caps = cached(work_dir(video) / "captions.json", make, force)
-    write_txts(work_dir(video).name, caps)
+    write_txts(work_dir(video).name, caps, cfg)
     return caps

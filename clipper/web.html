@@ -53,6 +53,12 @@
   dialog { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:16px; }
   dialog input { display:block; width:300px; margin:6px 0 10px; }
   textarea.caption { width:100%; height:120px; font-size:13px; }
+  .cen { color:var(--bad); font-size:13px; font-weight:600; grid-column:2; }
+  .chip { font:600 12px system-ui; padding:2px 8px; border-radius:99px; background:#ef444430; color:var(--fg); }
+  .chip.off { background:var(--line); text-decoration:line-through; }
+  .cen { color:var(--bad); font-size:13px; font-weight:600; grid-column:2; }
+  .chip { font:600 12px system-ui; padding:2px 8px; border-radius:99px; background:#ef444430; color:var(--fg); }
+  .chip.off { background:var(--line); text-decoration:line-through; }
   video::cue { font:600 18px system-ui; background:#000c; }
   video::cue(.note) { color:#facc15; }
   @media (max-width:760px) { .rev { grid-template-columns:1fr; } .hide-sm { display:none; } }
@@ -80,6 +86,7 @@ const main = document.getElementById("app");
 // oraya düşer (yeni sekmeyi bozmaz), every() zamanlayıcıları kap bağlı değilse kendini durdurur.
 let view = null, es = null;
 const every = (v, fn, ms) => { const t = setInterval(() => v.isConnected ? fn() : clearInterval(t), ms); };
+const debounce = (fn, ms) => { let t; return () => { clearTimeout(t); t = setTimeout(fn, ms); }; };
 
 const $ = (t, a = {}, ...kids) => { const e = document.createElement(t); for (const [k, v] of Object.entries(a)) { if (k === "dataset") Object.assign(e.dataset, v); else e[k] = v; } e.append(...kids.filter(k => k != null)); return e; };
 const fmt = s => s == null ? "–" : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -244,13 +251,14 @@ async function reviewPage(name) {
   const upscale = $("select", { id: "upscale" }, ...[["", "Upscale: varsayılan"], ["auto", "auto"], ["always", "always"], ["off", "off"]].map(([v, t]) => $("option", { value: v, textContent: t })));
   const msg = $("span", { id: "revmsg", className: "mut" });
   async function save(render) {
-    const body = { approved: [], hooks: {}, lines: {}, captions: {}, render, layout: layout.value || null, upscale: upscale.value || null };
+    const body = { approved: [], hooks: {}, lines: {}, captions: {}, censor: {}, render, layout: layout.value || null, upscale: upscale.value || null };
     for (const c of app.querySelectorAll(".bit")) {
       const n = c.dataset.n;
       if (c.querySelector(".ok").checked) body.approved.push(+n);
       body.hooks[n] = c.querySelector(".hook").value;
       body.lines[n] = [...c.querySelectorAll("textarea.line")].map(t => t.value.split("\n"));
       body.captions[n] = c.querySelector("textarea.caption").value;
+      body.censor[n] = c.cens;
     }
     try { const j = await api(`/api/videos/${enc(name)}/review`, { method: "POST", body }); msg.textContent = `Kaydedildi (${body.approved.length} klip).`; if (j.job) location.hash = "#/job/" + j.job.id; }
     catch (e) { msg.textContent = "Hata: " + e.message; }
@@ -262,11 +270,11 @@ async function reviewPage(name) {
   // Önizleme altyazısı: klibin Türkçe satırlarından anlık WebVTT (zamanlar kaynak videoya göre, subtitles.py ile aynı mantık)
   const ts = s => new Date(Math.max(0, s) * 1000).toISOString().slice(11, 23);
   const esc = t => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/-->/g, "->");
-  const vtt = (b, tr, texts) => "WEBVTT\n\n" + [
+  const vtt = (b, tr, texts, notes) => "WEBVTT\n\n" + [
     ...tr.groups.map((g, i) => [g.start, Math.min(tr.groups[i + 1]?.start ?? b.end, g.end + 1, b.end), texts[i]])
       .filter(([s, e, t]) => e > s && t.trim())
       .map(([s, e, t]) => `${ts(s)} --> ${ts(e)}\n${esc(t.split("\n").filter(l => l.trim()).join("\n"))}`),
-    ...(tr.notes || []).map(nt => `${ts(nt.start)} --> ${ts(Math.min(nt.start + d.note_secs, b.end))} line:0\n<c.note>${esc(nt.text)}</c>`),
+    ...(tr.notes || []).map((nt, i) => `${ts(nt.start)} --> ${ts(Math.min(nt.start + d.note_secs, b.end))} line:0\n<c.note>${esc(notes[i])}</c>`),
   ].join("\n\n") + "\n";
   for (const b of d.bits) {
     const tr = d.translations[b.n] || { groups: [], notes: [], replacements: [], changes: [] };
@@ -274,17 +282,35 @@ async function reviewPage(name) {
     const vid = $("video", { className: "prev", preload: "none", controls: true, src });
     vid.ontimeupdate = () => { if (vid.dataset.stop && vid.currentTime >= +vid.dataset.stop) { vid.pause(); delete vid.dataset.stop; } };
     const tas = [];
-    const setTrack = () => {
+    const cens = { add: [], remove: [], ...(d.censor[b.n] || {}) };
+    const cenOut = [];  // her metnin altındaki "Videoda: ..." satırı (hook, gruplar)
+    const chips = $("div", { className: "row" });
+    // Sansür sunucuda hesaplanır (censor.py ile aynı kurallar); önizleme altyazısı da sansürlü hâli gösterir
+    const setTrack = debounce(async () => {
+      const notes = (tr.notes || []).map(nt => nt.text);
+      const texts = [hook.value, ...tas.map(ta => ta.value), ...notes];
+      let r;
+      try { r = await api(`/api/videos/${enc(name)}/censor`, { method: "POST", body: { n: b.n, texts, ...cens } }); }
+      catch (e) { r = { texts, words: [] }; }
+      cenOut.forEach((el, i) => { const ch = r.texts[i] !== texts[i]; el.hidden = !ch; el.textContent = ch ? "Videoda: " + r.texts[i].replace(/\n/g, " / ") : ""; });
+      const toggle = (w, list, other) => () => { cens[other] = cens[other].filter(x => x !== w); if (!cens[list].includes(w)) cens[list].push(w); setTrack(); };
+      chips.replaceChildren(...(r.words.length || cens.remove.length || cens.add.length ? [$("span", { className: "mut", textContent: "Sansür:" })] : []),
+        ...r.words.map(w => $("button", { className: "chip", title: "Bu kelimenin sansürünü kaldır", textContent: w + " ✕", onclick: toggle(w.toLocaleLowerCase("tr"), "remove", "add") })),
+        ...cens.remove.map(w => $("button", { className: "chip off", title: "Yeniden sansürle", textContent: w, onclick: () => { cens.remove = cens.remove.filter(x => x !== w); setTrack(); } })),
+        addIn, $("button", { className: "sec", textContent: "Sansürle", onclick: () => { const w = addIn.value.trim().toLocaleLowerCase("tr"); if (w) { addIn.value = ""; toggle(w, "add", "remove")(); } } }));
       const old = vid.querySelector("track"); if (old) { URL.revokeObjectURL(old.src); old.remove(); }
       const t = $("track", { kind: "subtitles", srclang: "tr", label: "Türkçe", default: true,
-        src: URL.createObjectURL(new Blob([vtt(b, tr, tas.map(ta => ta.value))], { type: "text/vtt" })) });
+        src: URL.createObjectURL(new Blob([vtt(b, tr, r.texts.slice(1, 1 + tas.length), r.texts.slice(1 + tas.length))], { type: "text/vtt" })) });
       vid.append(t); t.track.mode = "showing";
-    };
+    }, 250);
+    const addIn = $("input", { placeholder: "kelime ekle", size: 12 });
+    const hook = $("input", { className: "hook", value: b.hook_tr, oninput: () => setTrack() });
+    const hookCen = $("div", { className: "cen", hidden: true }); cenOut.push(hookCen);
     const play = $("button", { className: "sec play", textContent: "▶ Aralığı oynat", onclick: () => { vid.currentTime = b.start; vid.dataset.stop = b.end; vid.play(); } });
     const left = $("div", {},
       $("div", { className: "row" }, $("label", {}, ok, ` Render et #${b.n}`), $("strong", { style: "color:var(--acc)", textContent: `${b.score}/10` }),
         $("span", { className: "mut", textContent: `${fmt(b.start)} – ${fmt(b.end)} (${(b.end - b.start).toFixed(0)} sn)` })),
-      $("input", { className: "hook", value: b.hook_tr }), $("div", { className: "mut", textContent: b.reason }));
+      hook, hookCen, $("div", { className: "mut", textContent: b.reason }));
     const cap = $("textarea", { className: "caption", value: d.captions[b.n] || "",
       placeholder: "Açıklama henüz yok (render ya da Çıktılar → Açıklamaları yeniden yaz ile üretilir)" });
     const capInfo = $("div");
@@ -299,9 +325,12 @@ async function reviewPage(name) {
     for (const g of tr.groups) {
       const ta = $("textarea", { className: "line", rows: 2, value: g.lines.join("\n") });
       ta.oninput = () => { check(ta); setTrack(); }; check(ta); tas.push(ta);
-      left.append($("div", { className: "grp" }, $("span", { className: "mut", textContent: fmt(g.start) }), ta, $("div", { className: "en", textContent: g.en })));
+      const cen = $("div", { className: "cen", hidden: true }); cenOut.push(cen);
+      left.append($("div", { className: "grp" }, $("span", { className: "mut", textContent: fmt(g.start) }), ta, cen, $("div", { className: "en", textContent: g.en })));
     }
+    left.append(chips);
     const card = $("section", { className: "card bit rev" + ((tr.uncovered || []).length ? " warn" : ""), dataset: { n: b.n } }, left, $("div", {}, vid, play));
+    card.cens = cens;
     const sync = () => card.classList.toggle("off", !ok.checked); ok.onchange = sync; sync(); setTrack();
     app.append(card);
   }
@@ -350,10 +379,13 @@ async function settingsPage() {
   const { values, fields } = await api("/api/settings");
   const LABEL = { "render.layout": "Düzen", "upscale.mode": "Kalite yükseltme (Real-ESRGAN)", "laughter.threshold": "Kahkaha eşiği",
     "select.max_bits": "Hedef bit sayısı (üst sınır)", "candidates.max_len": "Maks. klip uzunluğu (sn)", "subs.size": "Altyazı boyutu",
-    "subs.note_size": "Not boyutu", "claude.mode": "Claude modu", "claude.model": "Claude modeli" };
+    "subs.note_size": "Not boyutu", "claude.mode": "Claude modu", "claude.model": "Claude modeli",
+    "censor.enabled": "Küfür sansürü", "censor.mode": "Sansür biçimi (full: ******, first_letter: s*****)",
+    "censor.include_mild": "Hafif kelimeleri de sansürle (bok, lanet…)" };
   const inputs = {};
   const rows = Object.entries(fields).map(([k, t]) => {
-    const el = Array.isArray(t) ? $("select", { name: k }, ...t.map(v => $("option", { value: v, textContent: v, selected: values[k] === v })))
+    const el = t === "bool" ? $("input", { name: k, type: "checkbox", checked: values[k] })
+      : Array.isArray(t) ? $("select", { name: k }, ...t.map(v => $("option", { value: v, textContent: v, selected: values[k] === v })))
       : $("input", { name: k, value: values[k], type: t === "str" ? "text" : "number", step: t === "float" ? "0.05" : "1" });
     inputs[k] = el;
     return $("tr", {}, $("td", { textContent: LABEL[k] || k }), $("td", { className: "mut hide-sm", textContent: k }), $("td", {}, el));
@@ -361,7 +393,7 @@ async function settingsPage() {
   const msg = $("span", { className: "mut", id: "setmsg" });
   app.append($("div", { className: "card" }, $("table", {}, $("tbody", {}, ...rows)),
     $("div", { className: "row", style: "margin-top:10px" }, $("button", { id: "save-settings", textContent: "Kaydet", onclick: async () => {
-      const body = Object.fromEntries(Object.entries(inputs).map(([k, el]) => [k, el.value]));
+      const body = Object.fromEntries(Object.entries(inputs).map(([k, el]) => [k, el.type === "checkbox" ? el.checked : el.value]));
       try { await api("/api/settings", { method: "POST", body }); msg.textContent = "Kaydedildi (config.yaml)."; } catch (e) { msg.textContent = "Hata: " + e.message; }
     } }), msg)));
 }

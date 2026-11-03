@@ -1,0 +1,35 @@
+# Küfür sansürü kelime listesi (Claude'un proofread'de döndürdüğü listeye ek, yedek katman).
+# Her satır bir Python regex'i; küçük harfe çevrilmiş TÜM kelimeyle eşleşmeli (fullmatch).
+# \w* kelimeye eklenmiş ekleri yakalar ("siktim", "götüne"). Kelime = harf/rakam + kesme işaretli ek (Fin'e).
+# Bölümler: [strong] her zaman, [mild] yalnız censor.include_mild: true iken, [except] hiç sansürlenmez.
+
+[strong]
+sik\w*
+(?:has+)?s[iı]kt[iı]r\w*
+amk|amq|aq|mk
+am[ıi]n[aı]\w*
+amc[ıi][kğ]\w*
+orospu\w*
+piç\w*
+yarra[kğ]\w*
+göt\w*
+kahpe\w*
+pezevenk\w*
+ibne\w*
+taşa[kğ]\w*
+yavşa[kğ]\w*
+gavat\w*
+
+[mild]
+bok\w*
+lanet\w*
+kahrolas[ıi]\w*
+sıç\w*
+
+[except]
+götür\w*
+sikke\w*
+siklon\w*
+ama|amaç\w*|amca\w*|ambar\w*|amele\w*|amin\w*
+boks|boksör\w*|bokser\w*
+pikap\w*

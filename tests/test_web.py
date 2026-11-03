@@ -244,3 +244,28 @@ def test_review_saves_caption_and_updates_txt(env):
     env.client.post("/api/videos/a__b.mp4/review", json={"approved": [1], "captions": {"1": "yeni açıklama\n\n🎤 A"}})
     assert read_json(wd / "captions.json") == {"1": "yeni açıklama\n\n🎤 A"}
     assert (env.root / "out" / "a__b" / "1_h.txt").read_text(encoding="utf-8") == "yeni açıklama\n\n🎤 A\n"
+
+
+def test_censor_preview_overrides_and_censored_txt(env):
+    tiny_video(env.root / "samples" / "a__b.mp4")
+    wd = env.root / "work" / "a__b"
+    write_json(wd / "selected.json", [{"n": 1, "start": 0, "end": 30, "hook_tr": "h", "score": 8, "reason": "r"}])
+    write_json(wd / "translations_checked.json", {"1": {"groups": [{"start": 0, "end": 1, "lines": ["Ananı siktim"], "en": "x"}],
+                                                       "notes": [], "replacements": [], "profanity": [["keriz"]]}})
+    r = env.client.post("/api/videos/a__b.mp4/censor", json={"n": 1, "texts": ["Ananı siktim, keriz, götürdüm"]}).json()
+    assert r == {"texts": ["Ananı ******, *****, götürdüm"], "words": ["siktim", "keriz"]}
+    r = env.client.post("/api/videos/a__b.mp4/censor", json={"n": 1, "texts": ["siktim ama"], "remove": ["siktim"], "add": ["ama"]}).json()
+    assert r["texts"] == ["siktim ***"]
+    (env.root / "out" / "a__b").mkdir()
+    (env.root / "out" / "a__b" / "1_h.mp4").write_bytes(b"")
+    env.client.post("/api/videos/a__b.mp4/review", json={"approved": [1], "captions": {"1": "Neden siktir dedi?"},
+                                                        "censor": {"1": {"add": [], "remove": []}}})
+    assert read_json(wd / "captions.json") == {"1": "Neden siktir dedi?"}  # orijinal kalır
+    assert (env.root / "out" / "a__b" / "1_h.txt").read_text(encoding="utf-8") == "Neden ****** dedi?\n"
+    assert read_json(wd / "review.json")["censor"] == {"1": {"add": [], "remove": []}}
+
+
+def test_settings_censor_bool(env):
+    r = env.client.post("/api/settings", json={"censor.enabled": False, "censor.mode": "first_letter"})
+    assert r.json()["censor.enabled"] is False and r.json()["censor.mode"] == "first_letter"
+    assert env.client.post("/api/settings", json={"censor.include_mild": "belki"}).status_code == 400

@@ -21,6 +21,9 @@ PROMPT = """Her grup için düzeltilmiş satırları döndür. Grup sayısı ve 
 Her grup en fazla {max_lines} satır, satır başına en fazla {max_chars} karakter. Not en fazla {note_max} karakter.
 Notlarda "i" orijinal notun numarasıdır; silmek istediğin notu listeye koyma.
 Yaptığın her değişikliği "changes" listesine yaz (type: yazım | anlamsız | yanlış anlam | eklenmiş küfür | parantez | diğer).
+"profanity": her grup için (aynı sıra, {n} eleman) düzeltilmiş satırlardaki küfür/argo hakaret kelimeleri,
+kelimenin satırdaki TAM hâliyle, ekleriyle birlikte (ör. "siktim", "götüne"). Küfür yoksa boş liste.
+Hafif sözler (bok, lanet, kahrolası) ve küfür olmayan kelimeler (götürdüm, ama, amca, sikke) bu listeye girmez.
 
 ALTYAZI:
 {groups}
@@ -34,9 +37,10 @@ def schema(cfg):
     s = cfg["subs"]
     line = {"type": "string", "minLength": 1, "maxLength": s["max_chars"]}
     return {
-        "type": "object", "required": ["groups", "notes", "changes"],
+        "type": "object", "required": ["groups", "notes", "changes", "profanity"],
         "properties": {
             "groups": {"type": "array", "items": {"type": "array", "minItems": 1, "maxItems": s["max_lines"], "items": line}},
+            "profanity": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
             "notes": {"type": "array", "items": {
                 "type": "object", "required": ["i", "text"],
                 "properties": {"i": {"type": "integer"},
@@ -63,6 +67,8 @@ def proofread_bit(bit, tr, cfg):
     def check(d):
         if len(d["groups"]) != len(groups):
             raise ValueError(f"{len(groups)} grup olmalı, {len(d['groups'])} geldi")
+        if len(d["profanity"]) != len(groups):
+            raise ValueError(f"profanity listesi {len(groups)} elemanlı olmalı (grup başına bir liste)")
         translate.check_text({"groups": [{"lines": g} for g in d["groups"]], "notes": []}, 0)
         for nt in d["notes"]:
             if not 0 <= nt["i"] < len(notes):
@@ -71,7 +77,9 @@ def proofread_bit(bit, tr, cfg):
     d = ask_json(prompt, schema(cfg), cfg, check, label=f"kontrol #{bit['n']}", system=SYSTEM)
     return {"groups": [{**g, "lines": lines} for g, lines in zip(groups, d["groups"])],
             "notes": [{**notes[nt["i"]], "text": nt["text"]} for nt in d["notes"]],
-            "replacements": tr["replacements"], "uncovered": tr.get("uncovered", []), "changes": d["changes"]}
+            "replacements": tr["replacements"], "uncovered": tr.get("uncovered", []), "changes": d["changes"],
+            # Satırda gerçekten geçen kelimeler kalır (sansür yalnız çıktıda, censor.py)
+            "profanity": [[w for w in ws if w.strip() and w in " ".join(lines)] for ws, lines in zip(d["profanity"], d["groups"])]}
 
 
 def run(video, cfg, force=False):

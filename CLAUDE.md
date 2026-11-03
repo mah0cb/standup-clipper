@@ -12,6 +12,7 @@ Türkçe karaoke altyazılı 1080x1920 dikey klipler üretir. Windows, Python 3.
 - `main.py` — CLI. `clipper/` — adım modülleri (her biri `run(video, cfg, force)`), `review.html` onay sayfası.
 - `models/` (git dışı): jrgillick laughter-detection, MediaPipe yüz/YAMNet modelleri, `realesrgan/` (ncnn exe + modeller).
 - `tools/convert_realesrgan.py` — realesr-general-x4v3 .pth → ncnn (resmi ncnn paketinde yok).
+- `config/censor_tr.txt` — küfür sansürü regex listesi ([strong] / [mild] / [except]), `clipper/censor.py`.
 - `fonts/Montserrat-ExtraBold.ttf`, `tests/`, `samples/`, `work/`, `out/`.
 
 ## Pipeline (`RUN_STEPS`)
@@ -19,7 +20,7 @@ audio → transcribe (faster-whisper large-v3, GPU, noktalama için initial_prom
 CUDA torch, yedek YAMNet) → candidates (cümle sınırı: noktalama veya 0.6 sn+ duraklama) → select (Claude, kelime
 indeksiyle başlangıç/bitiş; her 5 dk'ya ≤1 bit, ≤12, puan ≥6) → gapfill (seçili bitlerdeki boşlukları VAD'sız
 yeniden transkribe) → translate (Claude, sistem prompt'unda çeviri kuralları, kapsama kontrolü, notlar) →
-proofread (Claude, `translations_checked.json`) → captions (Claude, tüm bitler tek çağrıda, `captions.json`) → subtitles (ASS) → reframe (PySceneDetect çekimleri + MediaPipe
+proofread (Claude, `translations_checked.json` + grup başına `profanity`) → captions (Claude, tüm bitler tek çağrıda, `captions.json`) → subtitles (ASS) → reframe (PySceneDetect çekimleri + MediaPipe
 yüz → çekim başına crop x) → [review: onay sayfası] → render (crop|blur_bg, isteğe bağlı Real-ESRGAN, altyazı en son).
 
 ## Web arayüzü
@@ -46,7 +47,7 @@ python main.py step <adim> <video>       # tek adımı zorla yeniden çalıştı
 ## Önemli config
 `render.layout`, `upscale.mode/tile/keep_frames`, `laughter.threshold` (0.4), `laughter.stride` (GPU'da 1),
 `select.per_minutes/max_bits/min_score`, `candidates.max_len` (90), `subs.size/note_size/credit_y`, `safe_zone` (altyazı+not y 1050–1450, sol 60 / sağ 140 px),
-`reframe.scene_threshold/min_shot/max_face_y/center_band/pose_model`, `claude.mode` (cli = `claude -p`, abonelik | api), `claude.model`.
+`reframe.scene_threshold/min_shot/max_face_y/center_band/pose_model`, `censor.enabled/mode (full|first_letter)/include_mild`, `claude.mode` (cli = `claude -p`, abonelik | api), `claude.model`.
 
 ## Alınan kararlar
 - Claude çağrıları `claude_client.ask_json`: JSON şema doğrulama + 2 yeniden deneme; cli modunda boş geçici
@@ -66,6 +67,11 @@ python main.py step <adim> <video>       # tek adımı zorla yeniden çalıştı
   `🎤 Komedyen – Gösteri` satırını ve sabit etiketleri (#standup #standupkomedi #türkçealtyazı #komedyen) kod ekler.
   Kurallar `make_check`'te (bağlaçla başlama, ≤1 emoji, reklam kalıbı, genel etiket yasak). Seçim artık açıklama üretmez.
 - Gösteri adı: `meta.json`'daki `show`, yoksa dosya adındaki `__` sonrası (`common.video_meta`); panelde satıra tıklayıp düzenlenir.
+- Küfür sansürü yalnız çıktıda (ASS altyazı/not/hook, out/*.txt); translations/captions JSON orijinal kalır. Kaynak:
+  proofread'in `profanity` listesi (tam kelime biçimi) ∪ `config/censor_tr.txt` (kesmeden önceki kök, fullmatch, istisnalar
+  önce) ∪ onay sayfasındaki ekle/kaldır (`review.json` → `censor: {n: {add, remove}}`). Yıldız sayısı = harf sayısı,
+  bu yüzden karaoke zamanı değişmez. Panel önizlemesi `POST /api/videos/{ad}/censor` ile sunucuda hesaplanır.
+  Eski videoların `translations_checked.json`'unda `profanity` yok → yalnız regex listesi.
 - Komedyen adı dosya adından standart büyük harfle (yabancı isimler: "ismo" → "Ismo").
 
 ## Bilinen sorunlar

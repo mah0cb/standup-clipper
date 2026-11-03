@@ -14,9 +14,10 @@ TR_FILE = "translations_checked.json"
 def load(wd):
     bits, trs = read_json(wd / "selected.json"), read_json(wd / TR_FILE)
     rv = wd / "review.json"
-    approved = read_json(rv)["approved"] if rv.exists() else [b["n"] for b in bits]
+    r = read_json(rv) if rv.exists() else {"approved": [b["n"] for b in bits]}
     cp = wd / "captions.json"
-    return {"bits": bits, "translations": trs, "approved": approved, "captions": read_json(cp) if cp.exists() else {}}
+    return {"bits": bits, "translations": trs, "approved": r["approved"], "censor": r.get("censor", {}),
+            "captions": read_json(cp) if cp.exists() else {}}
 
 
 def save(wd, body):
@@ -37,7 +38,11 @@ def save(wd, body):
                     g["lines"] = lines
     write_json(wd / "selected.json", bits)
     write_json(wd / TR_FILE, trs)
-    write_json(wd / "review.json", {"approved": sorted(int(n) for n in body.get("approved", []))})
+    rv = wd / "review.json"
+    old = read_json(rv) if rv.exists() else {}
+    # censor: {n: {"add": [kelime], "remove": [kelime]}} — tek tek kelime sansürü ekle/kaldır (gelmezse eskisi kalır)
+    write_json(rv, {"approved": sorted(int(n) for n in body.get("approved", [])),
+                    "censor": body.get("censor", old.get("censor", {}))})
     caps = {n: t.strip() for n, t in body.get("captions", {}).items() if t.strip()}
     if caps:
         cp = wd / "captions.json"

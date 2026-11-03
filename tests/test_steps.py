@@ -79,7 +79,7 @@ def test_review_server_saves(tmp_path):
         urllib.request.urlopen(urllib.request.Request(url + "/save", body, {"Content-Type": "application/json"}))
     finally:
         srv.shutdown()
-    assert read_json(tmp_path / "review.json") == {"approved": [2]}
+    assert read_json(tmp_path / "review.json") == {"approved": [2], "censor": {}}
     assert read_json(tmp_path / "selected.json")[0]["hook_tr"] == "yeni"
     assert read_json(tmp_path / review.TR_FILE)["1"]["groups"][0]["lines"] == ["düzeltildi", "satır"]
 
@@ -141,7 +141,7 @@ def test_select_check_rejects_mid_sentence_and_low_scores():
 def test_proofread_keeps_times(monkeypatch):
     tr = {"groups": [{"start": 1, "end": 2, "en": "hi", "lines": ["Selm"]}], "notes": [{"start": 1, "text": "not"}], "replacements": []}
     monkeypatch.setattr(proofread, "ask_json", lambda *a, **k: {
-        "groups": [["Selam"]], "notes": [], "changes": [{"group": 0, "before": "Selm", "after": "Selam", "type": "yazım"}]})
+        "groups": [["Selam"]], "notes": [], "profanity": [[]], "changes": [{"group": 0, "before": "Selm", "after": "Selam", "type": "yazım"}]})
     out = proofread.proofread_bit({"n": 1}, tr, load_config())
     assert out["groups"][0] == {"start": 1, "end": 2, "en": "hi", "lines": ["Selam"]}
     assert out["notes"] == [] and out["changes"][0]["type"] == "yazım"
