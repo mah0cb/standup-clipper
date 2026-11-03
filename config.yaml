@@ -65,18 +65,29 @@ safe_zone:                  # Instagram/TikTok/Shorts arayüzünün kapatmadığ
   ui_bottom: 0.20           # arayüzün kapladığı alt oran (yalnız kontrol görseli için)
   ui_right: 0.12            # arayüzün kapladığı sağ oran (yalnız kontrol görseli için)
 
-reframe:
-  every_n: 5                # her 5 karede bir yüz tespiti
-  smooth_window: 15         # hareketli ortalama penceresi (örnek sayısı)
-  min_confidence: 0.5
-  models: [blaze_face_short_range, blaze_face_full_range]   # sırayla denenir (full range: uzak/geniş çekim)
-  max_face_y: 0.6           # yüz merkezi (pose'ta burun) karenin bu oranından aşağıdaysa seyirci sayılır
-  pose_model: pose_landmarker_lite   # yüz bulunamazsa gövde merkezi (models/*.task); null = kapalı
-  center_band: 0.4          # yüz kırpılan alanın yatayda orta %40'ında tutulur (çekim içi takip)
-  hold_gap: 0.5             # bundan uzun yüzsüz aralıkta kamera son konumda bekler (sn)
-  path_tol: 12              # takip yolu sadeleştirme toleransı (px)
+reframe:                    # "kameraman": yalnız komedyeni takip eder, çekim tipine göre davranır
+  every_n: 5                # her 5 karede bir tespit
+  face_score: 0.6           # YuNet yüz tespit eşiği
+  face_match: 0.363         # SFace kosinüs benzerliği; altındaki yüzler (seyirci, tablo, poster) yok sayılır
+  min_face: 0.035           # tanıma için en küçük yüz yüksekliği (kare yüksekliğine oran; daha küçüğün vektörü güvenilmez)
+  min_confidence: 0.5       # pose tespit eşiği
+  pose_model: pose_landmarker_lite   # gövde merkezi (omuz-kalça ortası) için (models/*.task); null = kapalı
+  stage_y: 0.6              # yüz tanınmayan karede pose kişisinin burnu karenin üst %60'ında olmalı (altı seyirci)
+  pose_near: 0.15           # ...ve son bilinen konuma kare genişliğinin bu oranından yakın olmalı
+  close_face: 0.12          # yüz yüksekliği / kare yüksekliği ≥ bu → yakın çekim, altı → geniş çekim
+  min_detect_rate: 0.5      # komedyenin bulunduğu örnek oranı bundan azsa → ara çekim
+  max_jump: 0.15            # ardışık konumlar kare genişliğinin bu oranından fazla zıplıyorsa...
+  max_jump_ratio: 0.1       # ...ve bu tür zıplamalar geçişlerin bu oranını aşıyorsa → ara çekim
+  min_shot: 0.7             # bundan kısa çekimler önceki çekimin kadrajını kullanır (sn)
+  cutaway_mode: center      # ara çekim: center (sabit merkez kırpma) | blur_bg (yatay kare ortada, arkası bulanık)
+  wide_margin: 0.15         # geniş çekim: hareket aralığı kenarlarda bu payla sığıyorsa tek sabit kadraj
+  max_speed: 150            # kadraj kayma hızı üst sınırı (px/sn, 1080p kaynak ölçeğinde)
+  dir_hold: 2.0             # geniş çekimde yön değiştirmeden önce en az bekleme (sn)
+  min_move: 1.5             # bundan kısa hareketler yok sayılır (sn)
+  center_band: 0.4          # yakın çekim: yüz kırpılan alanın yatayda orta %40'ında tutulur
+  hold_gap: 0.5             # yakın çekim: bundan uzun yüzsüz aralıkta kamera son konumda bekler (sn)
+  path_tol: 12              # yakın çekim yolu sadeleştirme toleransı (px)
   scene_threshold: 27       # PySceneDetect ContentDetector eşiği (düşük = daha çok kesme)
-  min_shot: 1.0             # bundan kısa çekimler öncekiyle birleşir (sn)
 
 render:
   layout: crop              # crop (yüz takipli 9:16 kırpma) | blur_bg (video ortada, bulanık arka plan)

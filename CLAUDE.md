@@ -10,7 +10,7 @@ Türkçe karaoke altyazılı 1080x1920 dikey klipler üretir. Windows, Python 3.
 
 ## Klasörler
 - `main.py` — CLI. `clipper/` — adım modülleri (her biri `run(video, cfg, force)`), `review.html` onay sayfası.
-- `models/` (git dışı): jrgillick laughter-detection, MediaPipe yüz/YAMNet modelleri, `realesrgan/` (ncnn exe + modeller).
+- `models/` (git dışı): jrgillick laughter-detection, YuNet + SFace (OpenCV zoo .onnx), MediaPipe pose/YAMNet modelleri, `realesrgan/` (ncnn exe + modeller).
 - `tools/convert_realesrgan.py` — realesr-general-x4v3 .pth → ncnn (resmi ncnn paketinde yok).
 - `config/censor_tr.txt` — küfür sansürü regex listesi ([strong] / [mild] / [except]), `clipper/censor.py`.
 - `fonts/Montserrat-ExtraBold.ttf`, `tests/`, `samples/`, `work/`, `out/`.
@@ -20,8 +20,8 @@ audio → transcribe (faster-whisper large-v3, GPU, noktalama için initial_prom
 CUDA torch, yedek YAMNet) → candidates (cümle sınırı: noktalama veya 0.6 sn+ duraklama) → select (Claude, kelime
 indeksiyle başlangıç/bitiş; her 5 dk'ya ≤1 bit, ≤12, puan ≥6) → gapfill (seçili bitlerdeki boşlukları VAD'sız
 yeniden transkribe) → translate (Claude, sistem prompt'unda çeviri kuralları, kapsama kontrolü, notlar) →
-proofread (Claude, `translations_checked.json` + grup başına `profanity`) → captions (Claude, tüm bitler tek çağrıda, `captions.json`) → subtitles (ASS) → reframe (PySceneDetect çekimleri + MediaPipe
-yüz → çekim başına crop x) → [review: onay sayfası] → render (crop|blur_bg, isteğe bağlı Real-ESRGAN, altyazı en son).
+proofread (Claude, `translations_checked.json` + grup başına `profanity`) → captions (Claude, tüm bitler tek çağrıda, `captions.json`) → subtitles (ASS) → reframe (PySceneDetect çekimleri + YuNet/SFace komedyen
+tanıma + pose gövde → çekim tipi yakın/geniş/ara → kadraj yolu) → [review: onay sayfası] → render (crop|blur_bg, isteğe bağlı Real-ESRGAN, altyazı en son).
 
 ## Web arayüzü
 `clipper/web.py` (FastAPI, yalnız 127.0.0.1:8770) + `clipper/web.html` (vanilla JS SPA) + `clipper/jobs.py`
@@ -42,21 +42,30 @@ python main.py review <video>
 python main.py render <video> [--layout crop|blur_bg] [--upscale auto|always|off]
 python main.py captions <video>          # açıklamaları yeniden yazar, yalnız out/*.txt (render yok)
 python main.py step <adim> <video>       # tek adımı zorla yeniden çalıştırır
+python main.py step reframe-debug <video> <klip_no>   # kadraj hata ayıklama videosu → work/debug/
 ```
 
 ## Önemli config
 `render.layout`, `upscale.mode/tile/keep_frames`, `laughter.threshold` (0.4), `laughter.stride` (GPU'da 1),
 `select.per_minutes/max_bits/min_score`, `candidates.max_len` (90), `subs.size/note_size/credit_y`, `safe_zone` (altyazı+not y 1050–1450, sol 60 / sağ 140 px),
-`reframe.scene_threshold/min_shot/max_face_y/center_band/pose_model`, `censor.enabled/mode (full|first_letter)/include_mild`, `claude.mode` (cli = `claude -p`, abonelik | api), `claude.model`.
+`reframe.face_match/min_face/close_face/min_detect_rate/max_jump/cutaway_mode/wide_margin/max_speed/dir_hold/min_move/center_band`, `censor.enabled/mode (full|first_letter)/include_mild`, `claude.mode` (cli = `claude -p`, abonelik | api), `claude.model`.
 
 ## Alınan kararlar
 - Claude çağrıları `claude_client.ask_json`: JSON şema doğrulama + 2 yeniden deneme; cli modunda boş geçici
   klasörde, araçlar kapalı çalışır. Zamanları LLM değil kod hesaplar (kelime indeksi → zaman).
 - jrgillick orijinal scripti modern sürümlerde çalışmıyor; yalnız model tanımı + checkpoint kullanılıyor.
 - torch CUDA 13.2 derlemesi (2.15 için cu128 yok). Whisper (ctranslate2) pip'ten gelen cuBLAS/cuDNN 12 DLL'lerini kullanır.
-- Yüz: önce short range, bulamazsa full range, o da yoksa pose (`models/pose_landmarker_lite.task`) gövde merkezi;
-  karenin alt %40'ı seyirci sayılır (pose'ta burun). Çekim içi ölü bölgeli takip (`reframe.follow`): yüz kırpılan
-  alanın orta %40'ında tutulur; yol RDP ile sadeleşip ffmpeg crop x ifadesinde doğrusal geçiş olur.
+- Kadraj "kameraman" gibi: yalnız komedyen. Referans yüz = tüm kliplerin yakın çekim yüzlerinin (SFace) en kalabalık
+  benzerlik kümesi (`reframe.json` → `_ref`). Eşik altı yüzler (seyirci, tablo) ve `min_face`'ten küçük yüzler (uzak
+  seyircinin vektörü güvenilmez, 0.36–0.39 ile yanlış eşleşiyordu) yok sayılır. Yüz tanınmazsa sahne bölgesindeki
+  (burun üst %60) ve son konuma yakın pose kişisi. Çekim içinde 3 sn kayan medyandan sapan tekil konumlar atılır.
+- Çekim tipi: ara (tespit < %50 ya da zıplıyor) → sabit merkez | `cutaway_mode: blur_bg` (render'da overlay enable);
+  geniş → gövde (omuz-kalça) aralığı sığıyorsa tek sabit kadraj, yoksa sabit parçalar + cos ease geçiş (≤150 px/sn,
+  yön değişimi öncesi 2 sn); yakın → orta %40 ölü bölge + 3 sn kayan medyan (1.5 sn'den kısa hareket yok) + hız sınırı
+  (ileri/geri ortalamalı, gecikmesiz). 0.7 sn'den kısa çekim önceki kadrajı kullanır. Anahtar `[t, x, 1]` = ease.
+- Titreme metriği (`reframe.jitter`, 1080p ölçeğinde px/sn ve 3 sn başına yön değişimi) her klip için loglanır ve
+  `reframe.json`'da (`jitter`, `jitter_calm` = geniş+ara). `in_band` ara çekimleri saymaz.
+  Hata ayıklama: `python main.py step reframe-debug <video> <klip>` → `work/debug/`. Analiz ~60 sn / 85 sn'lik klip (CPU).
 - Yerleşim: hook üstte alttan hizalı, komedyen adı hemen altında (yarı saydam, hook ile birlikte kaybolur); altyazı alttan `text_bottom`'a,
   notlar üstten `text_top`'a hizalı. `test_rendered_text_stays_in_safe_zone` libass çıktısını pikselden ölçer.
 - Varsayılan: `render.layout: crop`, `upscale.mode: "off"` (telefonda fark görünmedi; ayarlardan açılabilir).
@@ -77,6 +86,7 @@ python main.py step <adim> <video>       # tek adımı zorla yeniden çalıştı
 ## Bilinen sorunlar
 - Upscale yavaş: RTX 4060'ta ~7.9 kare/sn (85 sn'lik klip ≈ 5.3 dk toplam), geçici kareler birkaç GB.
 - Komedyen kaynak karenin kenarındaysa crop daha öteye kayamaz; orta %40 kuralı orada sağlanamaz.
+- Komedyen arkadan/profilden görünüyorsa yüz tanınmaz; pose ile takip edilir. Upscale yolunda blur_bg ara çekim uygulanmaz.
 - Komedyen adı (y≈470) ilk 3 sn yakın çekimlerde başın üstüne denk gelebilir.
 - Whisper bazen kahkaha altındaki konuşmayı atlar; gapfill kısmen kurtarır.
 - `claude -p` kullanım limitine takılırsa adım hata verir; limit sıfırlanınca aynı komut cache'ten devam eder.

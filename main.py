@@ -6,13 +6,14 @@
   python main.py render video.mp4                   → onaylanan klipleri render eder
   python main.py captions video.mp4                 → açıklamaları yeniden yazar (render yok)
   python main.py step <adim> video.mp4              → tek adımı yeniden çalıştırır
+  python main.py step reframe-debug video.mp4 5     → 5. klibin kadraj hata ayıklama videosu (work/debug/)
 """
 import argparse
 import logging
 import sys
 from pathlib import Path
 
-from clipper import review
+from clipper import reframe, review
 from clipper.common import ROOT, load_config
 from clipper.pipeline import STEPS, VIDEO_EXT, comedian_from_filename, process, timed
 
@@ -38,8 +39,9 @@ def main():
     sub.add_parser("review", help="Onay sayfasını aç").add_argument("video")
     sub.add_parser("captions", help="Açıklamaları yeniden yaz (.txt'ler güncellenir, render yok)").add_argument("video")
     s = sub.add_parser("step", help="Tek adımı yeniden çalıştır")
-    s.add_argument("name", choices=list(STEPS))
+    s.add_argument("name", choices=[*STEPS, "reframe-debug"])
     s.add_argument("video")
+    s.add_argument("clip", nargs="?", type=int, help="reframe-debug: klip numarası")
     a = ap.parse_args()
 
     cfg = load_config()
@@ -75,6 +77,10 @@ def main():
         timed("render", a.video, cfg, layout=a.layout, upscale=a.upscale)
     elif a.cmd == "captions":
         timed("captions", a.video, cfg, force=True)
+    elif a.name == "reframe-debug":
+        if a.clip is None:
+            ap.error("reframe-debug için klip numarası gerekli: python main.py step reframe-debug <video> <klip_no>")
+        reframe.debug(a.video, cfg, a.clip)
     else:
         timed(a.name, a.video, cfg, force=True)
 

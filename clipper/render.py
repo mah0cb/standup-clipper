@@ -11,13 +11,22 @@ ESRGAN = ROOT / "models" / "realesrgan"
 SCALE = "scale=1080:1920:flags=lanczos,setsar=1"
 
 
-def layout_filter(layout, box):
-    """Tek giriş/tek çıkışlı filtre zinciri (altyazı hariç)."""
+BLUR_BG = ("split[a][b];[a]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,gblur=sigma=12,"
+           "scale=1080:1920[bg];[b]scale=1080:-2:flags=lanczos[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1")
+
+
+def layout_filter(layout, box, dur=None):
+    """Tek giriş/tek çıkışlı filtre zinciri (altyazı hariç). crop düzeninde ara çekimler (cutaway_mode: blur_bg)
+    bulanık arka planlı sürümle örtülür."""
     if layout == "blur_bg":
         # Arka plan: küçült → bulanıklaştır → büyüt (doğrudan 1080x1920'de bulanıklaştırmaktan çok daha hızlı)
-        return ("split[a][b];[a]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,gblur=sigma=12,"
-                "scale=1080:1920[bg];[b]scale=1080:-2:flags=lanczos[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1")
-    return f"{crop_filter(box)},{SCALE}"
+        return BLUR_BG
+    crop = f"{crop_filter(box)},{SCALE}"
+    cuts = reframe.cutaway_ranges(box, dur) if dur else []
+    if not cuts:
+        return crop
+    on = "+".join(f"between(t,{a},{b})" for a, b in cuts)
+    return f"split[cm][bm];[cm]{crop}[cv];[bm]{BLUR_BG}[bv];[cv][bv]overlay=enable='{on}'"
 
 
 def crop_filter(box):
@@ -53,6 +62,7 @@ def should_upscale(mode, layout, crop_h):
 
 def upscale_frames(video, bit, box, fdir, cfg):
     """Kes + kırp → kareler → Real-ESRGAN (x4). Büyütülmüş karelerin klasörünü döndürür."""
+    # ponytail: cutaway_mode blur_bg burada uygulanmaz (ara çekim merkez kırpılır); gerekirse kareler üstünde overlay
     u = cfg["upscale"]
     src, dst = fdir / "in", fdir / "out"
     shutil.rmtree(fdir, ignore_errors=True)
@@ -87,7 +97,7 @@ def render_bit(video, bit, box, ass_rel, out, layout, mode, cfg):
                 shutil.rmtree(fdir, ignore_errors=True)
         return time.time() - t
     ffmpeg(["-ss", f"{bit['start']:.3f}", "-to", f"{bit['end']:.3f}", "-i", str(video),
-            "-vf", f"{layout_filter(layout, box)},{sub}", str(out)], cfg)
+            "-vf", f"{layout_filter(layout, box, bit['end'] - bit['start'])},{sub}", str(out)], cfg)
     return 0.0
 
 

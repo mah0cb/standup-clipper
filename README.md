@@ -43,8 +43,8 @@ Modeller ve font (bir kez):
 ```powershell
 mkdir models, fonts
 curl.exe -L -o models\yamnet.tflite https://storage.googleapis.com/mediapipe-models/audio_classifier/yamnet/float32/1/yamnet.tflite
-curl.exe -L -o models\blaze_face_short_range.tflite https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite
-curl.exe -L -o models\blaze_face_full_range.tflite https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_full_range/float16/1/blaze_face_full_range.tflite
+curl.exe -L -o models\face_detection_yunet_2023mar.onnx https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
+curl.exe -L -o models\face_recognition_sface_2021dec.onnx https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx
 curl.exe -L -o models\pose_landmarker_lite.task https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task
 curl.exe -L -o fonts\Montserrat-ExtraBold.ttf https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf/Montserrat-ExtraBold.ttf
 git clone --depth 1 https://github.com/jrgillick/laughter-detection models\laughter-detection
@@ -168,11 +168,13 @@ Tüm modeller, eşikler, klip uzunlukları, font, renkler ve Claude modu buradad
   (torch 1.3, librosa 0.8) olduğundan doğrudan çalışmaz; `clipper/laughter.py` yalnızca reponun model
   tanımını ve checkpoint'ini kullanır, özellik çıkarımını yeni librosa API'siyle yapar. Model yüklenemezse
   otomatik olarak YAMNet'in (MediaPipe) kahkaha sınıflarına geçer (`laughter.backend: yamnet` ile zorlanabilir).
-- **Crop:** Kamera açısı değişince kadraj atlar; çekim içinde ölü bölgeli takip yapılır: yüz kırpılan alanın
-  orta %40'ındayken kadraj durur, dışına çıkacaksa yumuşakça kayar (`reframe.center_band`). Önce yakın çekim,
-  yüz bulunamazsa uzak mesafe (full range) yüz modeli, o da bulamazsa MediaPipe pose ile gövde merkezi denenir;
-  karenin alt kısmındaki yüzler seyirci sayılıp elenir (`reframe.max_face_y`). Yüz bulunamayan karelerde son
-  bulunan konum, hiç yüz olmayan çekimde bir önceki çekimin konumu kullanılır.
+- **Crop ("kameraman"):** Yalnız komedyen takip edilir: YuNet yüzleri bulur, SFace yakın çekimlerden çıkarılan
+  referans yüzle karşılaştırır; seyirci, tablo ve poster yüzleri yok sayılır (`reframe.face_match`). Yüz
+  tanınmazsa sahnedeki kişinin gövde merkezi (MediaPipe pose, omuz-kalça) kullanılır. Her çekim sınıflanır:
+  **yakın** (yüz orta %40'ta tutulur, 1.5 sn'den kısa hareketler yok sayılır), **geniş** (hareket sığıyorsa tek
+  sabit kadraj, sığmıyorsa yavaş ve yumuşak kaydırma, ≤150 px/sn), **ara** (komedyen yok: sabit merkez ya da
+  `cutaway_mode: blur_bg`). Kadraj sorunlarını görmek için: `python main.py step reframe-debug <video> <klip_no>`
+  → `work/debug/` (yeşil: komedyen, kırmızı: reddedilen yüzler).
 - **Güvenli alan:** Hook ve komedyen adı üstte (ikisi de ilk 3 sn görünür, birlikte kaybolur); altyazı ve notlar
   platform arayüzünün (alt ~%20, sağ ~%12) dışında kalan `safe_zone` bandında.
 - **Altyazı kapsaması:** Her Whisper kelimesi bir altyazı grubunda olmalı; eksik varsa çeviri eksik kelimeler
@@ -190,7 +192,8 @@ indirilir; diğerleri [Kurulum](#kurulum-adım-adım) bölümündeki komutlarla 
 |---|---|---|
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) + Whisper large-v3 ağırlıkları | Transkript | MIT |
 | [jrgillick/laughter-detection](https://github.com/jrgillick/laughter-detection) | Kahkaha tespiti | MIT |
-| [MediaPipe](https://github.com/google-ai-edge/mediapipe) (BlazeFace, Pose Landmarker, YAMNet) | Yüz/kişi tespiti, yedek kahkaha tespiti | Apache 2.0 |
+| [MediaPipe](https://github.com/google-ai-edge/mediapipe) (Pose Landmarker, YAMNet) | Kişi (gövde) tespiti, yedek kahkaha tespiti | Apache 2.0 |
+| [OpenCV Zoo](https://github.com/opencv/opencv_zoo) YuNet + SFace | Yüz tespiti ve komedyen tanıma | MIT (YuNet), Apache 2.0 (SFace) |
 | [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) (`realesr-general-x4v3`) + realesrgan-ncnn-vulkan | İsteğe bağlı kalite yükseltme | BSD-3-Clause / MIT |
 | [Montserrat](https://github.com/JulietaUla/Montserrat) (`fonts/`) | Altyazı fontu | SIL OFL 1.1 ([fonts/OFL.txt](fonts/OFL.txt)) |
 

@@ -5,7 +5,7 @@ import urllib.request
 
 import pytest
 
-from clipper import proofread, reframe, review, select_llm, subtitles, translate
+from clipper import proofread, review, select_llm, subtitles, translate
 from clipper.common import load_config, read_json, write_json
 
 WORDS = [{"i": i, "start": i * 0.5, "end": i * 0.5 + 0.4, "word": f"w{i}"} for i in range(6)]
@@ -53,14 +53,6 @@ def test_build_ass():
     assert "Dialogue: 0,0:00:00.50,0:00:02.20,Main" in ass  # sonraki gruba kadar ekranda
 
 
-def test_smooth_and_crop():
-    assert reframe.smooth([0, 0, 9, 0, 0], 3)[2] == pytest.approx(3)
-    box = reframe.crop_box([], 1920, 1080, 15)
-    assert box == {"x": 656, "y": 2, "w": 606, "h": 1076}  # yüz yoksa merkez
-    left = reframe.crop_box([100.0] * 10, 1920, 1080, 15)
-    assert left["x"] == 0  # kenara dayanır
-    right = reframe.crop_box([1900.0] * 10, 1920, 1080, 15)
-    assert right["x"] + right["w"] <= 1920
 
 
 def test_review_server_saves(tmp_path):
@@ -84,12 +76,6 @@ def test_review_server_saves(tmp_path):
     assert read_json(tmp_path / review.TR_FILE)["1"]["groups"][0]["lines"] == ["düzeltildi", "satır"]
 
 
-def test_pick_face_ignores_audience():
-    from types import SimpleNamespace as N
-    face = lambda x, y, s: N(bounding_box=N(origin_x=x, origin_y=y, width=20, height=20), categories=[N(score=s)])
-    faces = [face(100, 900, 0.95), face(500, 300, 0.7), face(800, 280, 0.9)]
-    assert reframe.pick_face(faces, 1000, 0.6) == 810  # alttaki seyirci elendi, en güvenilir seçildi
-    assert reframe.pick_face([face(100, 900, 0.9)], 1000, 0.6) is None
 
 
 def test_check_text_rejects_parentheses():
@@ -186,21 +172,8 @@ def test_find_gaps():
     assert gapfill.find_gaps(words, 0.0, 12.0, 2.0) == [(3.0, 8.0), (9.0, 12.0)]
 
 
-def test_shots_from_cuts():
-    c = {"min_shot": 1.0, "smooth_window": 1, "center_band": 0.4, "hold_gap": 0.5, "path_tol": 12}
-    samples = [(0.5, 500.0), (1.0, 520.0), (6.0, 1400.0), (6.5, 1420.0)]
-    shots = reframe.shots_from([0.3, 5.0, 9.2], samples, 10.0, 1920, 1080, c)
-    # 0.3 (çok kısa) ve 9.2 (sona çok yakın) birleşti → 2 çekim
-    assert [s["t"] for s in shots] == [0.0, 5.0]
-    assert shots[0]["x"] < shots[1]["x"] and shots[0]["keys"][0][0] == 0.0
-    no_face = reframe.shots_from([5.0], [(6.0, 1400.0)], 10.0, 1920, 1080, c)
-    assert no_face[0]["x"] == no_face[1]["x"]  # yüzsüz ilk çekim bulunan konumu kullanır
 
 
-def test_crop_x_expr():
-    assert reframe.crop_x_expr([{"t": 0, "x": 100}]) == "100"
-    assert reframe.crop_x_expr([{"t": 0, "x": 100}, {"t": 4.5, "x": 300}, {"t": 9, "x": 50}]) == \
-        "if(lt(t,4.5),100,if(lt(t,9),300,50))"
 
 
 def test_should_upscale():
@@ -294,49 +267,14 @@ def test_captions_run_uses_checked_subs_and_updates_txt(tmp_path, monkeypatch):
     assert read_json(tmp_path / "work" / "ismo_hello" / "captions.json") == caps
 
 
-RF = {"center_band": 0.4, "hold_gap": 0.5, "path_tol": 12, "min_shot": 1.0, "smooth_window": 15}
 
 
-x_at = reframe.x_at
 
 
-def test_follow_keeps_walking_face_in_center_band():
-    # ISMO "Kısaltmalar": tek çekimde yüz 692 → 1160 → 850 px yürüyor (eskiden crop sabitti, yüz sağ kenara düşüyordu)
-    W, cw = 1920, 568
-    path = [692 + 468 * min(t / 5, 1) - 300 * max(0, min((t - 10) / 4, 1)) for t in [i * 0.2 for i in range(110)]]
-    samples = [(i * 0.2, x) for i, x in enumerate(path)]
-    keys = reframe.follow(samples, 0.0, W, cw, RF)
-    assert len(keys) < 15  # sadeleştirilmiş yol, ffmpeg ifadesi kısa
-    for t, fx in samples:
-        assert abs(fx - (x_at(keys, t) + cw / 2)) <= 0.2 * cw, t  # yüz orta %40'ta
-    assert reframe.in_band(samples, [{"t": 0.0, "keys": keys}], cw, 0.4) == 1.0
-    assert reframe.in_band(samples, [{"t": 0.0, "keys": [(0.0, 0)]}], cw, 0.4) < 0.2  # sabit crop'ta yüz kaçar
-    expr = reframe.crop_x_expr([{"t": 0.0, "keys": keys}])
-    assert expr.count("if(") == len(keys) - 1
 
 
-def test_follow_holds_last_position_without_face():
-    keys = reframe.follow([(0.0, 900.0), (0.2, 900.0), (3.0, 1300.0)], 0.0, 1920, 568, RF)
-    assert x_at(keys, 2.5) == x_at(keys, 0.2)  # yüzsüz aralıkta son bulunan konum (merkeze kaymıyor)
-    assert x_at(keys, 3.0) + 284 == pytest.approx(1300, abs=0.2 * 568)
 
 
-def test_shot_without_face_uses_previous_shot_end():
-    samples = [(0.5, 700.0), (3.5, 1200.0)]  # 2. çekimde (5–10 sn) hiç yüz yok
-    shots = reframe.shots_from([5.0], samples, 10.0, 1920, 1012, RF)
-    assert shots[1]["keys"] == [(5.0, shots[0]["keys"][-1][1])]
-
-
-def test_pick_pose_body_center_and_audience():
-    from types import SimpleNamespace as N
-    def person(cx, nose_y, half):
-        lm = [N(x=cx, y=0.5, visibility=0.9) for _ in range(33)]
-        lm[0] = N(x=cx, y=nose_y, visibility=0.9)
-        lm[11], lm[12] = N(x=cx - half, y=0.5, visibility=0.9), N(x=cx + half, y=0.5, visibility=0.9)
-        lm[23], lm[24] = N(x=cx - half / 2, y=0.8, visibility=0.9), N(x=cx + half / 2, y=0.8, visibility=0.9)
-        return lm
-    assert reframe.pick_pose([person(0.5, 0.3, 0.05), person(0.25, 0.35, 0.1)], 1000, 0.6) == pytest.approx(250)
-    assert reframe.pick_pose([person(0.5, 0.85, 0.2)], 1000, 0.6) is None  # alttaki seyirci
 
 
 def test_rendered_text_stays_in_safe_zone(tmp_path):
