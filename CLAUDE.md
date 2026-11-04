@@ -13,6 +13,7 @@ Türkçe karaoke altyazılı 1080x1920 dikey klipler üretir. Windows, Python 3.
 - `models/` (git dışı): jrgillick laughter-detection, YuNet + SFace (OpenCV zoo .onnx), MediaPipe pose/YAMNet modelleri, `realesrgan/` (ncnn exe + modeller).
 - `tools/convert_realesrgan.py` — realesr-general-x4v3 .pth → ncnn (resmi ncnn paketinde yok).
 - `config/censor_tr.txt` — küfür sansürü regex listesi ([strong] / [mild] / [except]), `clipper/censor.py`.
+- `config/adult_tr.txt` — takvimin yetişkin konu listesi (aynı biçim, TR + EN kelime kelime), `clipper/schedule.py`.
 - `fonts/Montserrat-ExtraBold.ttf`, `tests/`, `samples/`, `work/`, `out/`.
 
 ## Pipeline (`RUN_STEPS`)
@@ -33,6 +34,8 @@ Sunucu logu `work/server.log` (beklenmeyen istek hataları yakalanır, arayüze 
 - Yükleme: `PUT /api/videos/upload?...&offset&total`, 8 MB'lık sıralı parçalar `.part`'a eklenir, en fazla 3 GB.
 - Silme: `DELETE /api/videos/{ad}` samples/ + work/ siler, out/ korunur; iş sıradaysa/çalışıyorsa 409.
 - Onay önizlemesi: altyazı ve notlar istemcide anlık WebVTT (Blob) olarak `<track>`'a bağlanır, düzenleyince yenilenir.
+- Takvim: `clipper/schedule.py` (saf mantık, Claude yok, `now` parametreli) + `/api/schedule*`, veri `work/_schedule.json`.
+  Her GET `sync` çalıştırır: kaçırılanı kaydırır, yeni klibi ekler; değişiklik yoksa sıraya dokunmaz. `.ics` etkinlikleri yerel saatli, UID kalıcı.
 
 ## CLI
 ```
@@ -48,7 +51,7 @@ python main.py step reframe-debug <video> <klip_no>   # kadraj hata ayıklama vi
 ## Önemli config
 `render.layout`, `upscale.mode/tile/keep_frames`, `laughter.threshold` (0.4), `laughter.stride` (GPU'da 1),
 `select.per_minutes/max_bits/min_score`, `candidates.max_len` (90), `subs.size/note_size/credit_y`, `safe_zone` (altyazı+not y 1050–1450, sol 60 / sağ 140 px),
-`reframe.face_match/min_face/close_face/min_detect_rate/max_jump/cutaway_mode/tiny_face_ratio/tiny_edge/tiny_subject_mode/track_margin/end_shot/wide_margin/max_speed/dir_hold/min_move/center_band`, `censor.enabled/mode (full|first_letter)/include_mild`, `claude.mode` (cli = `claude -p`, abonelik | api), `claude.model`.
+`reframe.face_match/min_face/close_face/min_detect_rate/max_jump/cutaway_mode/tiny_face_ratio/tiny_edge/tiny_subject_mode/track_margin/end_shot/wide_margin/max_speed/dir_hold/min_move/center_band`, `censor.enabled/mode (full|first_letter)/include_mild`, `claude.mode` (cli = `claude -p`, abonelik | api), `claude.model`, `schedule.slots/account_start_date/grace_minutes/exclude`.
 
 ## Alınan kararlar
 - Claude çağrıları `claude_client.ask_json`: JSON şema doğrulama + 2 yeniden deneme; cli modunda boş geçici
@@ -89,6 +92,14 @@ python main.py step reframe-debug <video> <klip_no>   # kadraj hata ayıklama vi
   bu yüzden karaoke zamanı değişmez. Panel önizlemesi `POST /api/videos/{ad}/censor` ile sunucuda hesaplanır.
   Eski videoların `translations_checked.json`'unda `profanity` yok → yalnız regex listesi.
 - Komedyen adı dosya adından standart büyük harfle (yabancı isimler: "ismo" → "Ismo").
+- Takvim kuralları (`schedule._fill`, açgözlü): sert kural küfür/yetişkin klip yalnız günün son slotunda ve hesabın 6. gününden itibaren
+  (uyan klip yoksa slot boş kalır). Yumuşak öncelik: akşamları işaretliler dolduracaksa temiz koyma > aynı gün aynı komedyen > dün aynı
+  saatteki komedyen > son 2 paylaşımda aynı konu > gece geçişinde aynı komedyen > kalan klibi çok olan > puan yayılımı. "A-B, B-A" bilerek
+  "art arda gelmesin"in önünde: 2 komedyende akşam B → ertesi öğle B olur, aynı gün olmaz; 3+ komedyende ikisi de sağlanır.
+- Takvim: bir platform bile işaretliyse klip paylaşılmış sayılır. Slot, `grace_minutes` (60) sonra kaçırılmış sayılır (paneli açmak kaydırmasın diye);
+  kaçırılan klip listenin başına alınır, pini düşer, gelecek kurallarla yeniden dizilir (düz kaydırma öğle/akşamı karıştırırdı). Sürükleme iki klibi
+  yer değiştirir, sürükleneni sabitler; elle konan klip kurala aykırıysa "kural dışı" uyarısı alır ama yerinde kalır.
+  `schedule.exclude`: `ismo_test` ve `ismo__5_dk_test`, `ismo_hello` ile aynı şakaları içeriyor.
 
 ## Bilinen sorunlar
 - Upscale yavaş: RTX 4060'ta ~7.9 kare/sn (85 sn'lik klip ≈ 5.3 dk toplam), geçici kareler birkaç GB.

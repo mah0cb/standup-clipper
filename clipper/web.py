@@ -8,17 +8,19 @@ import json
 import logging
 import shutil
 import subprocess
+import threading
 import webbrowser
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from . import censor
 from . import review as review_mod
+from . import schedule as sched
 from .common import ROOT, load_config, read_json, slug, video_meta, work_dir, write_json
 from .jobs import FINAL, JobQueue
 from .pipeline import VIDEO_EXT, save_meta
@@ -27,10 +29,12 @@ SAMPLES = ROOT / "samples"
 OUT = ROOT / "out"
 WORK = ROOT / "work"
 SHARES = WORK / "_shares.json"
+SCHEDULE = WORK / "_schedule.json"
 CONFIG = ROOT / "config.yaml"
 PLATFORMS = ("youtube", "instagram", "tiktok")
 MAX_UPLOAD = 3 * 1024 ** 3
 log = logging.getLogger("web")
+_schedule_lock = threading.Lock()
 
 # Ayarlar sayfasındaki alanlar: yol → tür/seçenekler
 SETTINGS = {
@@ -129,15 +133,43 @@ def outputs():
     for d in sorted(p for p in OUT.iterdir() if p.is_dir()) if OUT.exists() else []:
         sel_p = WORK / d.name / "selected.json"
         bits = {str(b["n"]): b for b in read_json(sel_p)} if sel_p.exists() else {}
+        comedian = video_meta(f"{d.name}.mp4")[0]
         for f in sorted(d.glob("*.mp4"), key=lambda f: (int(f.name.split("_")[0]) if f.name.split("_")[0].isdigit() else 0, f.name)):
             rel = f"{d.name}/{f.name}"
             b = bits.get(f.name.split("_")[0], {})
             txt = f.with_suffix(".txt")
-            items.append({"path": rel, "video": d.name, "hook": b.get("hook_tr") or f.stem,
+            items.append({"path": rel, "video": d.name, "n": f.name.split("_")[0], "comedian": comedian, "hook": b.get("hook_tr") or f.stem,
                           "score": b.get("score"), "duration": probe(f)["duration"],
                           "text": txt.read_text(encoding="utf-8") if txt.exists() else "",
                           "shares": shares.get(rel, {})})
     return items
+
+
+def now():
+    return datetime.now()
+
+
+def schedule_op(op=None, out=sched.view):
+    """Takvim işlemi: yükle → kaçırılanları kaydır → op → değiştiyse yaz → out. Dosya yoksa bugünden üretir."""
+    with _schedule_lock:
+        try:
+            cfg = load_config()
+            st, t = sched.settings(cfg), now()
+            clips = [sched.clip_info(o, WORK / o["video"], cfg) for o in outputs() if o["video"] not in st.exclude]
+            old = read_json(SCHEDULE) if SCHEDULE.exists() else None
+            if old:
+                data = sched.sync(old, clips, st, t)
+            else:
+                data = sched.rebuild({"entries": []}, clips, st, t.date().isoformat(), t)
+            if op:
+                data = op(data, clips, st, t)
+        except sched.ScheduleError as e:
+            raise HTTPException(400, str(e))
+        if data != (read_json(SCHEDULE) if old else None):  # op'lar listeyi yerinde değiştirir: diskle karşılaştır
+            tmp = SCHEDULE.with_suffix(".tmp")  # yarıda kesilen yazma elle sabitlemeleri kaybettirmesin
+            write_json(tmp, data)
+            tmp.replace(SCHEDULE)
+        return out(data, clips, st, t)
 
 
 def read_settings():
@@ -226,6 +258,20 @@ class ShareBody(BaseModel):
     path: str
     platform: str
     done: bool
+
+
+class ScheduleBuild(BaseModel):
+    start: str | None = None
+
+
+class ScheduleMove(BaseModel):
+    path: str
+    at: str
+
+
+class SchedulePin(BaseModel):
+    path: str
+    pinned: bool
 
 
 def create_app(queue=None, start_worker=True, open_url=None):
@@ -432,6 +478,34 @@ def create_app(queue=None, start_worker=True, open_url=None):
             entry.pop(body.platform, None)
         write_json(SHARES, shares)
         return entry
+
+    @app.get("/api/schedule")
+    def schedule_get():
+        return schedule_op()
+
+    @app.post("/api/schedule/rebuild")
+    def schedule_rebuild(body: ScheduleBuild):
+        def op(data, clips, st, t):
+            try:
+                start = date.fromisoformat(body.start) if body.start else t.date()
+            except ValueError:
+                raise sched.ScheduleError(f"Geçersiz tarih: {body.start}")
+            return sched.rebuild(data, clips, st, start, t)
+        return schedule_op(op)
+
+    @app.post("/api/schedule/move")
+    def schedule_move(body: ScheduleMove):
+        return schedule_op(lambda data, clips, st, t: sched.move(data, st, body.path, body.at, t))
+
+    @app.post("/api/schedule/pin")
+    def schedule_pin(body: SchedulePin):
+        return schedule_op(lambda data, clips, st, t: sched.pin(data, body.path, body.pinned))
+
+    @app.get("/api/schedule/calendar.ics")
+    def schedule_ics():
+        text = schedule_op(out=sched.to_ics)
+        return Response(text.encode("utf-8"), media_type="text/calendar; charset=utf-8",
+                        headers={"Content-Disposition": 'attachment; filename="paylasim_takvimi.ics"'})
 
     @app.get("/api/settings")
     def settings():

@@ -81,6 +81,8 @@ http://127.0.0.1:8770/ adresinde açılır (yalnızca bu bilgisayardan erişileb
 - **Çıktılar:** klipler tarayıcıda oynatılır; açıklama + hashtag kopyalama, "Klasörde göster",
   YouTube/Instagram/TikTok paylaşım takibi, "henüz paylaşılmamış" filtresi ve "Açıklamaları yeniden yaz"
   (yalnız `.txt`'ler güncellenir, video yeniden render edilmez).
+- **Takvim:** paylaşılmamış klipleri kurallarla günlere ve saatlere dağıtır (`schedule` ayarları): Bugün kartı,
+  sürükle-bırak ve sabitleme, kaçırılan slotu otomatik kaydırma, stok uyarısı, telefona `.ics` aktarımı.
 - **Ayarlar:** önemli `config.yaml` ayarları form olarak (yorumlar korunarak kaydedilir).
 
 İşler sırayla, tek tek çalışır; durum `work/_jobs.json`'da tutulur, sunucu kapanıp açılsa da kaybolmaz.

@@ -127,3 +127,9 @@ censor:                     # küfür sansürü: yalnız çıktıya (altyazı, n
   enabled: true
   mode: "full"              # full ("******") | first_letter ("s*****")
   include_mild: false       # bok, lanet, kahrolası da sansürlensin mi (config/censor_tr.txt [mild])
+
+schedule:                   # paylaşım takvimi (paneldeki Takvim sekmesi)
+  slots: ["12:30", "21:00"] # tırnaklı olmalı; günün son slotu "akşam" sayılır
+  account_start_date: "2026-11-02"  # hesabın açıldığı gün (ilk 3 / ilk 5 gün kuralları buna göre)
+  grace_minutes: 60         # slot saatinden bu kadar sonra hâlâ paylaşılmadıysa kaçırılmış sayılır (0 = hemen)
+  exclude: [ismo_test, ismo__5_dk_test]  # takvime girmeyen out/ klasörleri

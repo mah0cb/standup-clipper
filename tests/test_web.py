@@ -2,6 +2,7 @@ import json
 import shutil
 import subprocess
 import types
+from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,6 +22,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(web, "SAMPLES", tmp_path / "samples")
     monkeypatch.setattr(web, "OUT", tmp_path / "out")
     monkeypatch.setattr(web, "SHARES", tmp_path / "work" / "_shares.json")
+    monkeypatch.setattr(web, "SCHEDULE", tmp_path / "work" / "_schedule.json")
+    monkeypatch.setattr(web, "now", lambda: datetime(2026, 11, 10, 8, 0))
     monkeypatch.setattr(web, "WORK", tmp_path / "work")
     monkeypatch.setattr(web, "CONFIG", tmp_path / "config.yaml")
     monkeypatch.setattr(web, "load_config", lambda: common.load_config(tmp_path / "config.yaml"))
@@ -269,3 +272,68 @@ def test_settings_censor_bool(env):
     r = env.client.post("/api/settings", json={"censor.enabled": False, "censor.mode": "first_letter"})
     assert r.json()["censor.enabled"] is False and r.json()["censor.mode"] == "first_letter"
     assert env.client.post("/api/settings", json={"censor.include_mild": "belki"}).status_code == 400
+
+
+def schedule_clips(env):
+    """İki komedyen, 3'er klip; a__b #2 küfürlü, c__d #3 hariç tutulan klasörde değil ama yetişkin."""
+    for video, words in (("a__b", {"2": "Ananı siktim"}), ("c__d", {"3": "sekse inanmıyorum"})):
+        d = env.root / "out" / video
+        d.mkdir()
+        write_json(env.root / "work" / video / "selected.json", [{"n": n, "hook_tr": f"{video} {n}", "score": 8} for n in (1, 2, 3)])
+        write_json(env.root / "work" / video / "translations_checked.json",
+                   {str(n): {"groups": [{"start": 0, "end": 1, "lines": [words.get(str(n), "temiz")], "en": "x"}], "notes": []} for n in (1, 2, 3)})
+        for n in (1, 2, 3):
+            (d / f"{n}_k.mp4").write_bytes(b"")
+            (d / f"{n}_k.txt").write_text(f"h\n\n🎤 X\n\n#standup #standupkomedi #türkçealtyazı #x #{video[0]}{n}\n", encoding="utf-8")
+
+
+def test_schedule_page_generates_flags_and_excludes(env):
+    schedule_clips(env)
+    excluded = env.root / "out" / "ismo_test"
+    excluded.mkdir()
+    (excluded / "1_k.mp4").write_bytes(b"")
+    v = env.client.get("/api/schedule").json()
+    clips = {s["clip"]["path"]: s["clip"] for d in v["days"] for s in d["slots"] if s["clip"]}
+    assert len(clips) == 6 and "ismo_test/1_k.mp4" not in clips
+    assert clips["a__b/2_k.mp4"]["kufur"] and clips["c__d/3_k.mp4"]["yetiskin"] and not clips["a__b/1_k.mp4"]["flagged"]
+    assert clips["a__b/1_k.mp4"]["topic"] == "#a1" and clips["c__d/1_k.mp4"]["comedian"] == "C"
+    assert clips["a__b/2_k.mp4"]["at"].endswith("21:00") and clips["c__d/3_k.mp4"]["at"].endswith("21:00")
+    assert v["days_left"] == 3 and len(v["today"]) == 2  # stok uyarısı sınırın altında
+    assert read_json(env.root / "work" / "_schedule.json")["start"] == "2026-11-10"
+
+
+def test_schedule_move_pin_rebuild_and_errors(env):
+    schedule_clips(env)
+    v = env.client.get("/api/schedule").json()
+    slots = [s for d in v["days"] for s in d["slots"] if s["clip"]]
+    a, b = slots[0], slots[1]
+    r = env.client.post("/api/schedule/move", json={"path": a["clip"]["path"], "at": b["at"]})
+    assert r.status_code == 200
+    saved = {e["path"]: e for e in read_json(env.root / "work" / "_schedule.json")["entries"]}
+    assert saved[a["clip"]["path"]] == {"path": a["clip"]["path"], "at": b["at"], "pinned": True}
+    assert saved[b["clip"]["path"]]["at"] == a["at"]
+    env.client.post("/api/schedule/rebuild", json={})
+    assert read_json(env.root / "work" / "_schedule.json")["entries"].count(saved[a["clip"]["path"]]) == 1  # sabit kaldı
+    assert env.client.post("/api/schedule/pin", json={"path": b["clip"]["path"], "pinned": True}).status_code == 200
+    assert env.client.post("/api/schedule/move", json={"path": a["clip"]["path"], "at": "2026-11-11T13:00"}).status_code == 400
+    assert env.client.post("/api/schedule/pin", json={"path": "yok", "pinned": True}).status_code == 400
+    assert env.client.post("/api/schedule/rebuild", json={"start": "dün"}).status_code == 400
+
+
+def test_schedule_share_removes_future_clip_and_ics(env):
+    schedule_clips(env)
+    v = env.client.get("/api/schedule").json()
+    last = [s for d in v["days"] for s in d["slots"] if s["clip"]][-1]["clip"]
+    env.client.post("/api/outputs/share", json={"path": last["path"], "platform": "tiktok", "done": True})
+    v = env.client.get("/api/schedule").json()
+    assert last["path"] not in [s["clip"]["path"] for d in v["days"] for s in d["slots"] if s["clip"]]
+    r = env.client.get("/api/schedule/calendar.ics")
+    assert r.headers["content-type"].startswith("text/calendar") and "attachment" in r.headers["content-disposition"]
+    assert r.text.count("BEGIN:VEVENT") == 5
+
+
+def test_schedule_bad_config_is_400(env):
+    p = env.root / "config.yaml"
+    p.write_text(p.read_text(encoding="utf-8").replace('slots: ["12:30", "21:00"]', "slots: [12:30]"), encoding="utf-8")
+    r = env.client.get("/api/schedule")
+    assert r.status_code == 400 and "tırnaklı" in r.json()["detail"]

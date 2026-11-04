@@ -60,6 +60,12 @@
   .cen { color:var(--bad); font-size:13px; font-weight:600; grid-column:2; }
   .chip { font:600 12px system-ui; padding:2px 8px; border-radius:99px; background:#ef444430; color:var(--fg); }
   .chip.off { background:var(--line); text-decoration:line-through; }
+  .today { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:14px; }
+  .today video { width:100%; max-height:420px; aspect-ratio:9/16; background:#000; border-radius:8px; }
+  .today textarea { width:100%; height:110px; font-size:13px; }
+  tr.sch[draggable="true"] { cursor:grab; } tr.sch.over td { background:#ca8a0430; } tr.sch.done td { opacity:.55; }
+  a.btn { text-decoration:none; }
+  button.pin { padding:2px 6px; background:transparent; opacity:.35; } button.pin.on { opacity:1; }
   video::cue { font:600 18px system-ui; background:#000c; }
   video::cue(.note) { color:#facc15; }
   @media (max-width:760px) { .rev { grid-template-columns:1fr; } .hide-sm { display:none; } }
@@ -72,6 +78,7 @@
     <a href="#/library" data-p="library">Kütüphane</a>
     <a href="#/jobs" data-p="jobs">İşleme</a>
     <a href="#/outputs" data-p="outputs">Çıktılar</a>
+    <a href="#/schedule" data-p="schedule">Takvim</a>
     <a href="#/settings" data-p="settings">Ayarlar</a>
   </nav>
 </header>
@@ -99,14 +106,21 @@ async function api(url, opts = {}) {
   return j;
 }
 const badge = s => $("span", { className: "badge s-" + s.split(" ")[0], textContent: s });
+const freeVideos = el => el.querySelectorAll("video").forEach(v => { v.pause(); v.removeAttribute("src"); v.load(); });  // açık video bağlantılarını bırak
+// Platform işaret kutuları (Çıktılar ve Takvim)
+const shareBoxes = (o, onDone) => $("div", { className: "row" }, ...["youtube", "instagram", "tiktok"].map(p => {
+  const cb = $("input", { type: "checkbox", className: "share-" + p, checked: !!o.shares[p] });
+  cb.onchange = async () => { o.shares = await api("/api/outputs/share", { method: "POST", body: { path: o.path, platform: p, done: cb.checked } }); onDone(); };
+  return $("label", { className: "mut" }, cb, ` ${{ youtube: "YouTube", instagram: "Instagram", tiktok: "TikTok" }[p]}${o.shares[p] ? " · " + o.shares[p] : ""}`);
+}));
 
 function route() {
   if (es) { es.close(); es = null; }
-  if (view) view.querySelectorAll("video").forEach(v => { v.pause(); v.removeAttribute("src"); v.load(); });  // açık video bağlantılarını bırak
+  if (view) freeVideos(view);
   const [, page = "library", arg] = location.hash.split("/");
   document.querySelectorAll("nav a").forEach(a => a.classList.toggle("on", a.dataset.p === (page === "job" ? "jobs" : page)));
   view = $("div"); main.replaceChildren(view);
-  ({ library, jobs, job: jobPage, review: reviewPage, outputs: outputsPage, settings: settingsPage }[page] || library)(arg && decodeURIComponent(arg));
+  ({ library, jobs, job: jobPage, review: reviewPage, outputs: outputsPage, schedule: schedulePage, settings: settingsPage }[page] || library)(arg && decodeURIComponent(arg));
 }
 window.addEventListener("hashchange", route);
 // Açık sekmenin linkine tıklamak hashchange üretmez; yine de veriyi yeniden çek
@@ -365,11 +379,6 @@ async function outputsPage(filter) {
   const grid = o => $("div", { className: "grid" }, ...o.map(card));
   const list = $("div");
   function card(o) {
-    const shares = $("div", { className: "row" }, ...["youtube", "instagram", "tiktok"].map(p => {
-      const cb = $("input", { type: "checkbox", className: "share-" + p, checked: !!o.shares[p] });
-      cb.onchange = async () => { o.shares = { ...o.shares, ...(await api("/api/outputs/share", { method: "POST", body: { path: o.path, platform: p, done: cb.checked } })) }; if (!cb.checked) delete o.shares[p]; draw(); };
-      return $("label", { className: "mut" }, cb, ` ${{ youtube: "YouTube", instagram: "Instagram", tiktok: "TikTok" }[p]}${o.shares[p] ? " · " + o.shares[p] : ""}`);
-    }));
     const txt = $("textarea", { readOnly: true, value: o.text });
     return $("div", { className: "card out", dataset: { path: o.path } },
       $("video", { controls: true, preload: "metadata", src: "/api/outputs/file?path=" + enc(o.path) }),
@@ -378,7 +387,7 @@ async function outputsPage(filter) {
       $("div", { className: "row" },
         $("button", { className: "copy sec", textContent: "Kopyala", onclick: async e => { await navigator.clipboard.writeText(o.text); e.target.textContent = "Kopyalandı"; } }),
         $("button", { className: "reveal sec", textContent: "Klasörde göster", onclick: () => api("/api/outputs/reveal", { method: "POST", body: { path: o.path } }) })),
-      shares);
+      shareBoxes(o, draw));
   }
   function draw() {
     const v = vidSel.value, sh = shareSel.value;
@@ -398,6 +407,67 @@ async function outputsPage(filter) {
   app.append($("div", { className: "card row" }, $("strong", { textContent: "Çıktılar" }), vidSel, shareSel,
     $("span", { style: "margin-left:auto" }), capBtn, capMsg), list);
   draw();
+}
+
+/* ---------- Takvim ---------- */
+async function schedulePage() {
+  const app = view;
+  const body = $("div");
+  const msg = $("span", { className: "mut" });
+  const startIn = $("input", { type: "date", id: "sch-start" });
+  const day = s => new Date(s.slice(0, 10) + "T00:00").toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long" });
+  const when = at => `${new Date(at.slice(0, 10) + "T00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "long" })} ${at.slice(11)}`;
+  async function act(url, b) {
+    try { draw(await api(url, b ? { method: "POST", body: b } : {})); msg.textContent = ""; }
+    catch (e) { msg.textContent = "Hata: " + e.message; }
+  }
+  const reload = () => act("/api/schedule");
+  const chips = c => [c.kufur ? "küfür" : null, c.yetiskin ? "yetişkin" : null, c.kisa ? "kısa" : null].filter(Boolean).map(t => $("span", { className: "badge", textContent: t }));
+  function todayCard(d) {
+    const cards = d.today.map(c => $("div", { className: "card out", dataset: { path: c.path } },
+      $("strong", { textContent: `${c.at.slice(11)} · ${c.comedian}` }),
+      $("video", { controls: true, preload: "metadata", src: "/api/outputs/file?path=" + enc(c.path) }),
+      $("div", { style: "font-weight:600;margin-top:6px", textContent: c.hook }),
+      $("textarea", { readOnly: true, value: c.text }),
+      $("div", { className: "row" }, $("button", { className: "copy sec", textContent: "Kopyala", onclick: async e => { await navigator.clipboard.writeText(c.text); e.target.textContent = "Kopyalandı"; } })),
+      shareBoxes(c, reload)));
+    return $("section", { className: "card", id: "sch-today" }, $("h2", { textContent: "Bugün", style: "margin-top:0;font-size:17px" }),
+      cards.length ? $("div", { className: "today" }, ...cards)
+        : $("div", { className: "mut", textContent: "Bugün paylaşım yok." + (d.next ? ` Sıradaki: ${when(d.next.at)} · ${d.next.comedian} · ${d.next.hook}` : "") }));
+  }
+  function row(s) {
+    const c = s.clip, free = !c || (!c.done && !c.past);
+    const tr = $("tr", { className: "sch" + (c?.done ? " done" : ""), dataset: { at: s.at }, draggable: !!c && free });
+    if (c && free) tr.ondragstart = e => e.dataTransfer.setData("text/plain", c.path);
+    if (free) {
+      tr.ondragover = e => { e.preventDefault(); tr.classList.add("over"); };
+      tr.ondragleave = () => tr.classList.remove("over");
+      tr.ondrop = e => { e.preventDefault(); tr.classList.remove("over"); const path = e.dataTransfer.getData("text/plain"); if (path && path !== c?.path) act("/api/schedule/move", { path, at: s.at }); };
+    }
+    tr.append($("td", { textContent: s.at.slice(11) }));
+    if (!c) { tr.append($("td", { colSpan: 5, className: "mut", textContent: "boş slot (buraya sürükleyebilirsiniz)" })); return tr; }
+    tr.append($("td", { textContent: c.hook }), $("td", { textContent: c.comedian }), $("td", { textContent: fmt(c.duration) }),
+      $("td", {}, $("div", { className: "row" }, ...chips(c), c.done ? badge("paylaşıldı") : null,
+        c.warn ? $("span", { className: "bad", title: "Küfür/yetişkin klip yalnız akşama ve hesabın ilk 5 gününden sonraya konur", textContent: "⚠ kural dışı" }) : null)),
+      $("td", {}, free ? $("button", { className: "pin" + (c.pinned ? " on" : ""), title: c.pinned ? "Sabit: yeniden oluşturmada yerinde kalır (kaldırmak için tıklayın)" : "Sabitle", textContent: "📌",
+        onclick: () => act("/api/schedule/pin", { path: c.path, pinned: !c.pinned }) }) : null));
+    return tr;
+  }
+  function draw(d) {
+    freeVideos(body);
+    if (!startIn.value) startIn.value = d.start;
+    body.replaceChildren(
+      d.days_left < 5 ? $("div", { className: "err", id: "sch-stock", textContent: `${d.days_left} gün içerik kaldı, yeni gösteri işle.` }) : "",
+      ...d.moved.map(m => $("div", { className: "card sch-moved", textContent: `Kaçırıldı: "${m.hook}" ${when(m.from)} slotunda paylaşılmadı, ${when(m.to)} slotuna kaydırıldı.` })),
+      todayCard(d),
+      ...(d.days.length ? d.days.map(g => $("section", { className: "card" }, $("h3", { textContent: day(g.date), style: "margin:0 0 6px;font-size:15px" }),
+        $("table", {}, $("tbody", {}, ...g.slots.map(row))))) : [$("div", { className: "card mut", textContent: "Takvimde klip yok." })]));
+  }
+  app.append($("div", { className: "card row" }, $("strong", { textContent: "Takvim" }),
+    $("label", { className: "mut" }, "Başlangıç ", startIn),
+    $("button", { id: "sch-rebuild", textContent: "Yeniden oluştur", title: "Sabitlenmemiş klipleri kurallara göre yeniden dağıtır", onclick: () => act("/api/schedule/rebuild", { start: startIn.value || null }) }),
+    $("a", { className: "btn", id: "sch-ics", href: "/api/schedule/calendar.ics", textContent: "Takvime aktar (.ics)" }), msg), body);
+  await reload();
 }
 
 /* ---------- Ayarlar ---------- */

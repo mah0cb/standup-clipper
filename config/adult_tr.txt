@@ -1,0 +1,26 @@
+# Yetişkin konu listesi (takvim: bu klipler yalnız akşam slotuna ve hesabın ilk 5 gününden sonraya konur).
+# Biçim censor_tr.txt ile aynı: her satır bir regex, küçük harfli TÜM kelimeyle eşleşir (fullmatch).
+# Türkçe altyazı, İngilizce kaynak metin ve açıklama taranır. [except] önce uygulanır.
+
+[strong]
+seks\w*
+sex\w*
+cinsel\w*
+seviş\w*
+porn\w*
+orgazm\w*
+prezervatif\w*
+kondom\w*
+condom\w*
+penis\w*
+vajina\w*
+meme
+memeler\w*
+mastürb\w*
+erekt\w*
+dick
+cock
+pussy
+
+[except]
+seksen\w*
